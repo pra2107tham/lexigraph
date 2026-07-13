@@ -40,3 +40,7 @@ def outlines():
 
 def drafted_sections():
     return get_db()["drafted_sections"]
+
+
+def jobs():
+    return get_db()["jobs"]
