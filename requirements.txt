@@ -1,0 +1,26 @@
+# --- API layer ---
+fastapi
+uvicorn[standard]
+python-multipart          # file uploads
+
+# --- Config ---
+pydantic
+pydantic-settings
+python-dotenv
+
+# --- Ingestion ---
+unstructured-client       # Unstructured serverless partition API
+
+# --- Stores ---
+pymongo                   # MongoDB Atlas (truth store)
+qdrant-client[fastembed]  # Qdrant + local dense/sparse embeddings via fastembed
+
+# --- Retrieval ---
+cohere                    # Cohere Rerank v3.5
+
+# --- LLM (via OpenRouter, OpenAI-compatible) ---
+openai                    # OpenRouter uses the OpenAI SDK shape
+mirascope                 # typed LLM calls (primary); OpenAI SDK is the fallback path
+
+# --- Orchestration ---
+burr[start]               # Apache Burr state machine + tracking UI
