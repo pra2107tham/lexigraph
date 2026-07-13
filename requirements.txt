@@ -13,6 +13,7 @@ unstructured-client       # Unstructured serverless partition API
 
 # --- Stores ---
 pymongo                   # MongoDB Atlas (truth store)
+certifi                   # CA bundle for Atlas TLS (macOS cert fix)
 qdrant-client[fastembed]  # Qdrant + local dense/sparse embeddings via fastembed
 
 # --- Retrieval ---

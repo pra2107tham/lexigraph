@@ -15,6 +15,7 @@ so caching can be enabled later if the chosen route supports it.
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 
 from mirascope import llm
@@ -26,10 +27,25 @@ from app.models import DraftedSection, ParentChunk
 
 @lru_cache
 def _model() -> llm.Model:
-    """Register the OpenRouter key once and return the configured model handle."""
+    """Return the configured model handle.
+
+    Mirascope's openrouter provider reads the OPENROUTER_API_KEY env var at call
+    time (passing api_key to register_provider is not honored), so we export the
+    settings value into the environment here.
+    """
     settings = get_settings()
-    llm.register_provider("openrouter", api_key=settings.openrouter_api_key)
+    if settings.openrouter_api_key:
+        os.environ.setdefault("OPENROUTER_API_KEY", settings.openrouter_api_key)
     return llm.Model(f"openrouter/{settings.model_id}")
+
+
+def _user(text: str) -> llm.UserMessage:
+    """Mirascope encodes user content as a list of parts, not a bare string."""
+    return llm.UserMessage(content=[llm.Text(text=text)])
+
+
+def _system(text: str) -> llm.SystemMessage:
+    return llm.SystemMessage(content=text)
 
 
 def _format_sources(sources: list[ParentChunk]) -> str:
@@ -71,7 +87,7 @@ def draft_section(
         f"Instructions: {instructions}"
     )
     response = _model().call(
-        [llm.SystemMessage(content=_DRAFT_SYSTEM), llm.UserMessage(content=user)],
+        [_system(_DRAFT_SYSTEM), _user(user)],
         format=DraftedSection,
     )
     return response.parse()
@@ -91,7 +107,7 @@ def check_grounded(section_text: str, source: ParentChunk) -> Grounded:
         f"DRAFT TEXT:\n{section_text}"
     )
     response = _model().call(
-        [llm.SystemMessage(content=_GROUND_SYSTEM), llm.UserMessage(content=user)],
+        [_system(_GROUND_SYSTEM), _user(user)],
         format=Grounded,
     )
     return response.parse()

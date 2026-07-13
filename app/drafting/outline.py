@@ -5,10 +5,9 @@ The user reviews/overrides this outline (Plan Mode) before drafting begins.
 
 from __future__ import annotations
 
-from mirascope import llm
 from pydantic import BaseModel
 
-from app.drafting.llm import _model
+from app.drafting.llm import _model, _system, _user
 from app.models import Outline, OutlineSection
 
 
@@ -32,7 +31,7 @@ _OUTLINE_SYSTEM = (
 
 def generate_outline(job_id: str, prompt: str) -> Outline:
     response = _model().call(
-        [llm.SystemMessage(content=_OUTLINE_SYSTEM), llm.UserMessage(content=prompt)],
+        [_system(_OUTLINE_SYSTEM), _user(prompt)],
         format=_OutlineDraft,
     )
     draft = response.parse()
