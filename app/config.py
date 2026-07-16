@@ -22,7 +22,7 @@ class Settings(BaseSettings):
 
     # --- Ingestion: Unstructured serverless ---
     unstructured_api_key: str = ""
-    unstructured_api_url: str = "https://api.unstructuredapp.io"
+    unstructured_api_url: str = "https://platform.unstructuredapp.io/api/v1"
 
     # --- Truth store: MongoDB Atlas ---
     mongodb_uri: str = ""

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import uuid
 
+from typing import Annotated
 from fastapi import APIRouter, HTTPException, UploadFile
 from pydantic import BaseModel
 

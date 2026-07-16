@@ -54,4 +54,4 @@ class Citation(BaseModel):
 class DraftedSection(BaseModel):
     section_id: str
     text: str
-    citations: list[Citation] = Field(default_factory=list)
+    citations: list[Citation]

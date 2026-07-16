@@ -40,12 +40,11 @@ def _model() -> llm.Model:
 
 
 def _user(text: str) -> llm.UserMessage:
-    """Mirascope encodes user content as a list of parts, not a bare string."""
-    return llm.UserMessage(content=[llm.Text(text=text)])
+    return llm.messages.user(text)
 
 
 def _system(text: str) -> llm.SystemMessage:
-    return llm.SystemMessage(content=text)
+    return llm.messages.system(text)
 
 
 def _format_sources(sources: list[ParentChunk]) -> str:
