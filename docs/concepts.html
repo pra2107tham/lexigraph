@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LexiGraph — What makes it not plain RAG</title>
+<style>
+  :root{
+    --ink:#1c1a15;         /* near-black warm ink */
+    --ink-soft:#4a453a;
+    --paper:#f2ece0;       /* aged paper */
+    --paper-deep:#e8e0cf;
+    --rule:#c9bfa7;        /* hairline rule */
+    --seal:#8a2b1f;        /* oxblood — the accent, used with restraint */
+    --seal-soft:#b8503f;
+    --dense:#2f5d50;       /* forest — "meaning" side */
+    --exact:#7a5a1e;       /* bronze — "exact/keyword" side */
+    --margin:#8a8069;      /* marginalia grey-green */
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0;
+    background:
+      radial-gradient(1200px 600px at 80% -10%, #fbf7ee 0%, transparent 60%),
+      var(--paper);
+    color:var(--ink);
+    font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+    line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1080px;margin:0 auto;padding:0 28px 120px}
+
+  /* ---- masthead ---- */
+  header.mast{
+    border-bottom:2px solid var(--ink);
+    padding:64px 0 24px;
+    margin-bottom:8px;
+  }
+  .kicker{
+    font-family:ui-monospace,"SF Mono",Menlo,monospace;
+    font-size:11px;letter-spacing:.32em;text-transform:uppercase;
+    color:var(--seal);font-weight:700;margin-bottom:20px;
+  }
+  h1.title{
+    font-size:clamp(38px,7vw,76px);line-height:.98;margin:0 0 18px;
+    font-weight:800;letter-spacing:-.02em;
+  }
+  h1.title em{font-style:italic;color:var(--seal);font-weight:800}
+  .dek{
+    font-size:clamp(17px,2.4vw,21px);color:var(--ink-soft);max-width:60ch;
+    margin:0;
+  }
+  .dek b{color:var(--ink)}
+
+  /* ---- clause blocks ---- */
+  .clause{
+    display:grid;
+    grid-template-columns:82px 1fr;
+    gap:0;
+    border-top:1px solid var(--rule);
+    padding:56px 0 8px;
+  }
+  .clause-no{
+    font-family:ui-monospace,"SF Mono",Menlo,monospace;
+    font-size:13px;font-weight:700;color:var(--seal);
+    letter-spacing:.06em;padding-top:6px;
+  }
+  .clause-body{min-width:0}
+  h2{
+    font-size:clamp(24px,3.6vw,34px);line-height:1.08;margin:0 0 6px;
+    font-weight:750;letter-spacing:-.01em;
+  }
+  .subhead{
+    font-family:ui-monospace,"SF Mono",Menlo,monospace;
+    font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--margin);margin:0 0 22px;
+  }
+  p{margin:0 0 16px;max-width:66ch}
+  .lead b{color:var(--seal)}
+
+  /* marginalia — the "aha" asides */
+  .aha{
+    border-left:3px solid var(--seal);
+    background:linear-gradient(90deg,rgba(138,43,31,.06),transparent);
+    padding:12px 16px;margin:22px 0;
+    font-size:15px;color:var(--ink-soft);
+  }
+  .aha b{color:var(--seal);font-style:italic}
+  .aha .tag{
+    display:inline-block;font-family:ui-monospace,monospace;font-size:10px;
+    letter-spacing:.18em;text-transform:uppercase;color:var(--seal);
+    font-weight:700;margin-right:8px;
+  }
+
+  figure{margin:26px 0 8px}
+  figcaption{
+    font-family:ui-monospace,monospace;font-size:11px;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--margin);margin-top:10px;text-align:center;
+  }
+  svg{display:block;width:100%;height:auto}
+  .card{
+    background:var(--paper-deep);
+    border:1px solid var(--rule);
+    border-radius:2px;
+  }
+
+  /* two-store compare grid */
+  .vs{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--rule);
+     border:1px solid var(--rule);border-radius:2px;overflow:hidden;margin:22px 0 8px}
+  .vs>div{background:var(--paper-deep);padding:20px 22px}
+  .vs h3{margin:0 0 4px;font-size:18px}
+  .vs .who{font-family:ui-monospace,monospace;font-size:11px;letter-spacing:.14em;
+     text-transform:uppercase;margin-bottom:14px}
+  .vs.dense .who{color:var(--dense)} .vs.exact .who{color:var(--exact)}
+  .vs ul{margin:0;padding-left:18px;font-size:15px;color:var(--ink-soft)}
+  .vs li{margin-bottom:7px}
+  .mono{font-family:ui-monospace,"SF Mono",Menlo,monospace}
+
+  a.top{color:var(--seal);text-decoration:none;border-bottom:1px solid var(--seal-soft)}
+  footer{border-top:2px solid var(--ink);margin-top:64px;padding-top:20px;
+    font-size:14px;color:var(--margin)}
+  @media(max-width:640px){
+    .clause{grid-template-columns:1fr;gap:8px}
+    .clause-no{padding-top:0}
+    .vs{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="mast">
+    <div class="kicker">LexiGraph · Field Notes</div>
+    <h1 class="title">Where this stops<br>being <em>plain RAG</em>.</h1>
+    <p class="dek">Seven decisions that trip people up on first read — the two-store split,
+    the dedupe-before-rerank trick, the verify-and-redraft loop, and the memory that flows
+    forward. <b>The confusing parts, drawn out.</b></p>
+  </header>
+
+  <!-- 01 — TWO STORES -->
+  <section class="clause">
+    <div class="clause-no">§ 01</div>
+    <div class="clause-body">
+      <p class="subhead">Storage · two stores, two jobs</p>
+      <h2>One database can't do both jobs — so we run two.</h2>
+      <p class="lead">Search needs <b>meaning</b> (“find things <em>like</em> payment terms”).
+      Citation needs <b>exact truth</b> (“give me clause abc‑123, word for word”).
+      A normal DB does the second; only a vector store does the first.</p>
+
+      <div class="vs dense">
+        <div>
+          <div class="who">◆ Qdrant · vector store</div>
+          <h3>Finds by meaning</h3>
+          <ul>
+            <li>text → <span class="mono">[0.02,−0.5,0.9…]</span> vectors</li>
+            <li>“payment terms” matches “remittance within 30 days”</li>
+            <li>nearest-neighbour, milliseconds over millions</li>
+            <li>fuzzy on purpose — <em>where</em> is it?</li>
+          </ul>
+        </div>
+        <div class="exact" style="--x:1">
+          <div class="who" style="color:var(--exact)">■ MongoDB · truth store</div>
+          <h3>Returns exact text</h3>
+          <ul>
+            <li>fetch by key: <span class="mono">parent_id → passage</span></li>
+            <li>byte-for-byte — the quote you cite</li>
+            <li>the parents, raw elements, jobs, outlines</li>
+            <li>precise on purpose — <em>what</em> exactly?</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="aha"><span class="tag">why not one</span>
+        A normal DB searching <b>“similar meaning”</b> would scan every row and still
+        have no notion of <i>similar</i>. Qdrant finds it by meaning; Mongo proves it
+        word-for-word. Neither can do the other's job.</div>
+    </div>
+  </section>
+
+  <!-- 02 — TWO-STAGE RETRIEVAL -->
+  <section class="clause">
+    <div class="clause-no">§ 02</div>
+    <div class="clause-body">
+      <p class="subhead">Retrieval · recall, then precision</p>
+      <h2>Cast a wide, cheap net. Then score sharply.</h2>
+      <p class="lead">Plain RAG takes the vector top-5 and stops — but that top-5 is only
+      <b>approximate</b>. The true best passage is often ranked #8 and gets dropped.
+      So we retrieve <b>wide</b> first, then rerank <b>sharp</b>.</p>
+
+      <figure>
+        <svg viewBox="0 0 920 300" role="img" aria-label="Two-stage retrieval pipeline">
+          <defs>
+            <marker id="ar" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto">
+              <path d="M0,0 L8,4 L0,8 Z" fill="#1c1a15"/>
+            </marker>
+          </defs>
+          <!-- query -->
+          <rect x="10" y="120" width="120" height="60" rx="3" fill="#e8e0cf" stroke="#1c1a15"/>
+          <text x="70" y="146" text-anchor="middle" font-family="ui-monospace,monospace" font-size="12" fill="#1c1a15">query</text>
+          <text x="70" y="164" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10" fill="#8a8069">“payment terms”</text>
+
+          <!-- stage 1: hybrid -->
+          <rect x="185" y="40" width="230" height="220" rx="3" fill="#f7f2e7" stroke="#2f5d50" stroke-width="1.5"/>
+          <text x="300" y="66" text-anchor="middle" font-size="14" font-weight="700" fill="#2f5d50" font-family="ui-monospace,monospace">STAGE 1 · QDRANT</text>
+          <text x="300" y="84" text-anchor="middle" font-size="11" fill="#8a8069" font-family="ui-monospace,monospace">wide net · recall</text>
+          <rect x="205" y="100" width="88" height="52" rx="3" fill="#e4ede9" stroke="#2f5d50"/>
+          <text x="249" y="122" text-anchor="middle" font-size="11" fill="#2f5d50" font-weight="700">dense</text>
+          <text x="249" y="138" text-anchor="middle" font-size="9.5" fill="#4a453a">meaning</text>
+          <rect x="307" y="100" width="88" height="52" rx="3" fill="#efe6cf" stroke="#7a5a1e"/>
+          <text x="351" y="122" text-anchor="middle" font-size="11" fill="#7a5a1e" font-weight="700">sparse</text>
+          <text x="351" y="138" text-anchor="middle" font-size="9.5" fill="#4a453a">keywords</text>
+          <path d="M249,152 L288,182" stroke="#2f5d50" fill="none"/>
+          <path d="M351,152 L312,182" stroke="#7a5a1e" fill="none"/>
+          <rect x="235" y="184" width="130" height="40" rx="3" fill="#2f5d50"/>
+          <text x="300" y="203" text-anchor="middle" font-size="11" fill="#f2ece0" font-weight="700" font-family="ui-monospace,monospace">RRF fusion</text>
+          <text x="300" y="217" text-anchor="middle" font-size="9" fill="#cfe0d8">server-side · one call</text>
+          <text x="300" y="248" text-anchor="middle" font-size="11" fill="#1c1a15">~50 child hits</text>
+
+          <!-- arrow to dedupe -->
+          <line x1="415" y1="150" x2="470" y2="150" stroke="#1c1a15" marker-end="url(#ar)"/>
+
+          <!-- dedupe -->
+          <rect x="472" y="112" width="120" height="76" rx="3" fill="#f2ece0" stroke="#8a2b1f" stroke-width="1.5" stroke-dasharray="4 3"/>
+          <text x="532" y="138" text-anchor="middle" font-size="12" font-weight="700" fill="#8a2b1f" font-family="ui-monospace,monospace">dedupe</text>
+          <text x="532" y="155" text-anchor="middle" font-size="10" fill="#4a453a">→ distinct</text>
+          <text x="532" y="169" text-anchor="middle" font-size="10" fill="#4a453a">parents</text>
+
+          <line x1="592" y1="150" x2="647" y2="150" stroke="#1c1a15" marker-end="url(#ar)"/>
+
+          <!-- stage 2: rerank -->
+          <rect x="650" y="90" width="180" height="120" rx="3" fill="#f7f2e7" stroke="#8a2b1f" stroke-width="1.5"/>
+          <text x="740" y="116" text-anchor="middle" font-size="14" font-weight="700" fill="#8a2b1f" font-family="ui-monospace,monospace">STAGE 2</text>
+          <text x="740" y="133" text-anchor="middle" font-size="12" fill="#8a2b1f" font-family="ui-monospace,monospace">COHERE</text>
+          <text x="740" y="151" text-anchor="middle" font-size="11" fill="#8a8069" font-family="ui-monospace,monospace">precision</text>
+          <text x="740" y="178" text-anchor="middle" font-size="11" fill="#1c1a15">reads query + text</text>
+          <text x="740" y="196" text-anchor="middle" font-size="13" font-weight="700" fill="#8a2b1f">→ top 5</text>
+
+          <line x1="740" y1="210" x2="740" y2="248" stroke="#1c1a15" marker-end="url(#ar)"/>
+          <text x="740" y="272" text-anchor="middle" font-size="12" fill="#1c1a15" font-weight="700">to the drafter</text>
+        </svg>
+        <figcaption>50 wide · dedupe to parents · rerank to 5 sharp</figcaption>
+      </figure>
+
+      <div class="aha"><span class="tag">the plus of qdrant</span>
+        RRF fusion runs <b>on the server</b>, fusing by <i>rank</i> not raw score — so you
+        never normalise cosine against BM25 by hand. One round-trip returns the merged list.</div>
+    </div>
+  </section>
+
+  <!-- 03 — DEDUPE TRICK -->
+  <section class="clause">
+    <div class="clause-no">§ 03</div>
+    <div class="clause-body">
+      <p class="subhead">Retrieval · the part that confused everyone</p>
+      <h2>Dedupe sits <em>between</em> the 50 hits and the reranker.</h2>
+      <p class="lead">We do <b>not</b> rerank 50 raw children. Qdrant returns 50 child hits;
+      we collapse them to <b>distinct parents first</b>, and only <i>those</i> reach Cohere.</p>
+
+      <figure>
+        <svg viewBox="0 0 920 240" role="img" aria-label="Dedupe before rerank">
+          <!-- 50 children -->
+          <text x="90" y="30" text-anchor="middle" font-size="12" fill="#8a8069" font-family="ui-monospace,monospace">50 CHILD HITS</text>
+          <g font-family="ui-monospace,monospace" font-size="10">
+            <rect x="20" y="46" width="140" height="26" rx="3" fill="#e4ede9" stroke="#2f5d50"/><text x="30" y="63" fill="#2f5d50">child → parent X</text>
+            <rect x="20" y="78" width="140" height="26" rx="3" fill="#e4ede9" stroke="#2f5d50"/><text x="30" y="95" fill="#2f5d50">child → parent X</text>
+            <rect x="20" y="110" width="140" height="26" rx="3" fill="#efe6cf" stroke="#7a5a1e"/><text x="30" y="127" fill="#7a5a1e">child → parent Y</text>
+            <rect x="20" y="142" width="140" height="26" rx="3" fill="#e4ede9" stroke="#2f5d50"/><text x="30" y="159" fill="#2f5d50">child → parent X</text>
+            <rect x="20" y="174" width="140" height="26" rx="3" fill="#e7dceb" stroke="#6a4a7a"/><text x="30" y="191" fill="#6a4a7a">child → parent Z</text>
+          </g>
+
+          <!-- dedupe gate -->
+          <line x1="170" y1="123" x2="300" y2="123" stroke="#1c1a15"/>
+          <rect x="300" y="86" width="150" height="74" rx="3" fill="#f2ece0" stroke="#8a2b1f" stroke-width="1.6" stroke-dasharray="4 3"/>
+          <text x="375" y="112" text-anchor="middle" font-size="13" font-weight="700" fill="#8a2b1f" font-family="ui-monospace,monospace">_dedupe_parents</text>
+          <text x="375" y="130" text-anchor="middle" font-size="10.5" fill="#4a453a">first hit per parent_id wins</text>
+          <text x="375" y="147" text-anchor="middle" font-size="10.5" fill="#4a453a">(list is rank-ordered)</text>
+          <line x1="450" y1="123" x2="560" y2="123" stroke="#1c1a15"/>
+          <polygon points="560,118 570,123 560,128" fill="#1c1a15"/>
+
+          <!-- distinct parents -->
+          <text x="650" y="30" text-anchor="middle" font-size="12" fill="#8a8069" font-family="ui-monospace,monospace">DISTINCT PARENTS</text>
+          <g font-family="ui-monospace,monospace" font-size="11" font-weight="700">
+            <rect x="580" y="52" width="150" height="30" rx="3" fill="#e4ede9" stroke="#2f5d50"/><text x="595" y="72" fill="#2f5d50">parent X · full text</text>
+            <rect x="580" y="90" width="150" height="30" rx="3" fill="#efe6cf" stroke="#7a5a1e"/><text x="595" y="110" fill="#7a5a1e">parent Y · full text</text>
+            <rect x="580" y="128" width="150" height="30" rx="3" fill="#e7dceb" stroke="#6a4a7a"/><text x="595" y="148" fill="#6a4a7a">parent Z · full text</text>
+          </g>
+          <line x1="730" y1="105" x2="800" y2="105" stroke="#1c1a15"/>
+          <polygon points="800,100 810,105 800,110" fill="#1c1a15"/>
+          <rect x="812" y="82" width="96" height="46" rx="3" fill="#8a2b1f"/>
+          <text x="860" y="103" text-anchor="middle" font-size="11" fill="#f2ece0" font-weight="700" font-family="ui-monospace,monospace">rerank</text>
+          <text x="860" y="119" text-anchor="middle" font-size="9" fill="#f2d9d3">these only</text>
+        </svg>
+        <figcaption>3 children of parent X → 1 parent X · Cohere never sees the duplicates</figcaption>
+      </figure>
+
+      <div class="aha"><span class="tag">two wins, one step</span>
+        <b>Efficiency:</b> no rerank slot wasted on a duplicate parent.
+        <b>Correctness:</b> a “Net 30” clause and a conflicting “Net 60” clause are
+        <i>different parents</i> — so both survive to the top 5, and the drafter surfaces the
+        conflict instead of averaging it away.</div>
+    </div>
+  </section>
+
+  <!-- 04 — RERANKER EATS TEXT -->
+  <section class="clause">
+    <div class="clause-no">§ 04</div>
+    <div class="clause-body">
+      <p class="subhead">Retrieval · text, not vectors</p>
+      <h2>The reranker reads words. No vectors cross the wire.</h2>
+      <p class="lead">Stage 1 compares vectors made <b>separately</b>. The reranker reads the
+      query and the passage <b>together</b>, as plain language — which is why it's sharper,
+      slower, and only ever runs on the small deduped set.</p>
+      <div class="vs">
+        <div>
+          <div class="who" style="color:var(--dense)">◆ embedding search</div>
+          <ul>
+            <li>input: <span class="mono">vectors (numbers)</span></li>
+            <li>scores by distance between two <i>separately-made</i> vectors</li>
+            <li>cheap · runs over millions</li>
+            <li>approximate</li>
+          </ul>
+        </div>
+        <div>
+          <div class="who" style="color:var(--seal)">■ reranker (Cohere)</div>
+          <ul>
+            <li>input: <span class="mono">query + full parent text</span></li>
+            <li>reads both <i>together</i> in one pass</li>
+            <li>expensive · runs on a handful</li>
+            <li>sharp</li>
+          </ul>
+        </div>
+      </div>
+      <div class="aha"><span class="tag">parent, not fragment</span>
+        Each child point stored the <b>whole parent passage</b> in its payload. So what gets
+        reranked is one <i>full parent passage</i> per parent — never a 256-token child fragment,
+        never anything numeric.</div>
+    </div>
+  </section>
+
+  <!-- 05 — THE BURR LOOP -->
+  <section class="clause">
+    <div class="clause-no">§ 05</div>
+    <div class="clause-body">
+      <p class="subhead">Orchestration · a loop, not a line</p>
+      <h2>Draft → verify → redraft-or-save → next section.</h2>
+      <p class="lead">Plain RAG is one shot: retrieve, generate, done. This is a
+      <b>state machine</b> (Apache Burr) with two loops living in one graph — a retry loop and
+      a section loop — plus a durable persister that can pause for human approval and resume.</p>
+
+      <figure>
+        <svg viewBox="0 0 920 300" role="img" aria-label="Burr drafting loop">
+          <defs>
+            <marker id="a2" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#1c1a15"/></marker>
+            <marker id="a2r" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#8a2b1f"/></marker>
+          </defs>
+          <!-- nodes -->
+          <g font-family="ui-monospace,monospace">
+            <rect x="30"  y="120" width="120" height="56" rx="3" fill="#e4ede9" stroke="#2f5d50" stroke-width="1.4"/>
+            <text x="90"  y="145" text-anchor="middle" font-size="13" font-weight="700" fill="#2f5d50">retrieve</text>
+            <text x="90"  y="162" text-anchor="middle" font-size="9" fill="#4a453a">hybrid + rerank</text>
+
+            <rect x="200" y="120" width="120" height="56" rx="3" fill="#e8e0cf" stroke="#1c1a15" stroke-width="1.4"/>
+            <text x="260" y="145" text-anchor="middle" font-size="13" font-weight="700" fill="#1c1a15">draft</text>
+            <text x="260" y="162" text-anchor="middle" font-size="9" fill="#4a453a">LLM · grounded</text>
+
+            <rect x="370" y="120" width="120" height="56" rx="3" fill="#f2ece0" stroke="#8a2b1f" stroke-width="1.6"/>
+            <text x="430" y="145" text-anchor="middle" font-size="13" font-weight="700" fill="#8a2b1f">evaluate</text>
+            <text x="430" y="162" text-anchor="middle" font-size="9" fill="#4a453a">D4 citation gate</text>
+
+            <rect x="540" y="120" width="120" height="56" rx="3" fill="#e8e0cf" stroke="#1c1a15" stroke-width="1.4"/>
+            <text x="600" y="145" text-anchor="middle" font-size="13" font-weight="700" fill="#1c1a15">commit</text>
+            <text x="600" y="162" text-anchor="middle" font-size="9" fill="#4a453a">save · cursor++</text>
+
+            <rect x="720" y="120" width="120" height="56" rx="3" fill="#2f5d50"/>
+            <text x="780" y="152" text-anchor="middle" font-size="13" font-weight="700" fill="#f2ece0">assemble</text>
+          </g>
+          <!-- forward arrows -->
+          <line x1="150" y1="148" x2="196" y2="148" stroke="#1c1a15" marker-end="url(#a2)"/>
+          <line x1="320" y1="148" x2="366" y2="148" stroke="#1c1a15" marker-end="url(#a2)"/>
+          <line x1="490" y1="148" x2="536" y2="148" stroke="#1c1a15" marker-end="url(#a2)"/>
+          <line x1="660" y1="148" x2="716" y2="148" stroke="#1c1a15" marker-end="url(#a2)"/>
+          <text x="513" y="140" text-anchor="middle" font-size="9.5" fill="#2f5d50" font-family="ui-monospace,monospace">pass ✓</text>
+
+          <!-- retry loop: evaluate -> draft -->
+          <path d="M410,120 C400,72 280,72 262,116" fill="none" stroke="#8a2b1f" stroke-width="1.6" stroke-dasharray="5 3" marker-end="url(#a2r)"/>
+          <text x="336" y="66" text-anchor="middle" font-size="10.5" fill="#8a2b1f" font-family="ui-monospace,monospace" font-weight="700">eval_ok = false → REDRAFT</text>
+
+          <!-- section loop: commit -> retrieve -->
+          <path d="M580,176 C560,244 130,244 92,180" fill="none" stroke="#1c1a15" stroke-width="1.4" stroke-dasharray="5 3" marker-end="url(#a2)"/>
+          <text x="336" y="262" text-anchor="middle" font-size="10.5" fill="#1c1a15" font-family="ui-monospace,monospace" font-weight="700">cursor &lt; sections → NEXT SECTION</text>
+        </svg>
+        <figcaption>inner loop = retry · outer loop = next section · exit = assemble</figcaption>
+      </figure>
+
+      <div class="aha"><span class="tag">why not a while-loop</span>
+        The backward <b>retry</b> edge and the ability to <b>pause at the human gate and resume</b>
+        (SQLite persister, keyed by job_id) are exactly what plain control flow does badly and a
+        state machine does naturally.</div>
+    </div>
+  </section>
+
+  <!-- 06 — D4 GATE -->
+  <section class="clause">
+    <div class="clause-no">§ 06</div>
+    <div class="clause-body">
+      <p class="subhead">Safety · the hallucination firewall</p>
+      <h2>D4 — no citation gets saved unless it holds.</h2>
+      <p class="lead">The biggest risk in a legal tool is a <b>fabricated citation</b>. The
+      <span class="mono">evaluate</span> node runs two checks per citation, in order — and any
+      failure sends the section back to be <b>redrafted</b>.</p>
+
+      <figure>
+        <svg viewBox="0 0 920 220" role="img" aria-label="D4 two-check gate">
+          <defs><marker id="a3" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#1c1a15"/></marker></defs>
+          <rect x="20" y="86" width="120" height="48" rx="3" fill="#e8e0cf" stroke="#1c1a15"/>
+          <text x="80" y="106" text-anchor="middle" font-size="12" font-weight="700">a citation</text>
+          <text x="80" y="122" text-anchor="middle" font-size="9" fill="#4a453a" font-family="ui-monospace,monospace">parent_id + claim</text>
+          <line x1="140" y1="110" x2="186" y2="110" stroke="#1c1a15" marker-end="url(#a3)"/>
+
+          <!-- check 1 -->
+          <rect x="190" y="70" width="200" height="80" rx="3" fill="#f7f2e7" stroke="#7a5a1e" stroke-width="1.4"/>
+          <text x="290" y="94" text-anchor="middle" font-size="12" font-weight="700" fill="#7a5a1e" font-family="ui-monospace,monospace">CHECK 1 · exists?</text>
+          <text x="290" y="114" text-anchor="middle" font-size="11" fill="#4a453a">parent_id was actually</text>
+          <text x="290" y="130" text-anchor="middle" font-size="11" fill="#4a453a">retrieved · no LLM · cheap</text>
+          <line x1="390" y1="110" x2="436" y2="110" stroke="#1c1a15" marker-end="url(#a3)"/>
+
+          <!-- check 2 -->
+          <rect x="440" y="70" width="200" height="80" rx="3" fill="#f2ece0" stroke="#8a2b1f" stroke-width="1.6"/>
+          <text x="540" y="94" text-anchor="middle" font-size="12" font-weight="700" fill="#8a2b1f" font-family="ui-monospace,monospace">CHECK 2 · supports?</text>
+          <text x="540" y="114" text-anchor="middle" font-size="11" fill="#4a453a">source actually backs the</text>
+          <text x="540" y="130" text-anchor="middle" font-size="11" fill="#4a453a">claim · LLM yes/no</text>
+
+          <!-- outcomes -->
+          <line x1="640" y1="110" x2="686" y2="110" stroke="#1c1a15" marker-end="url(#a3)"/>
+          <rect x="690" y="46" width="120" height="48" rx="3" fill="#2f5d50"/>
+          <text x="750" y="68" text-anchor="middle" font-size="12" font-weight="700" fill="#f2ece0">pass → commit</text>
+          <text x="750" y="84" text-anchor="middle" font-size="9" fill="#cfe0d8" font-family="ui-monospace,monospace">eval_ok = true</text>
+          <rect x="690" y="128" width="120" height="48" rx="3" fill="#8a2b1f"/>
+          <text x="750" y="150" text-anchor="middle" font-size="12" font-weight="700" fill="#f2ece0">fail → redraft</text>
+          <text x="750" y="166" text-anchor="middle" font-size="9" fill="#f2d9d3" font-family="ui-monospace,monospace">eval_ok = false</text>
+          <path d="M686,110 L690,70" stroke="#2f5d50" fill="none"/>
+          <path d="M686,110 L690,152" stroke="#8a2b1f" fill="none"/>
+        </svg>
+        <figcaption>exists (cheap) · then supports (LLM) · fail either → redraft</figcaption>
+      </figure>
+
+      <div class="aha"><span class="tag">lightweight by design</span>
+        This is the v1 minimum that still guarantees the safety property. The full version —
+        re-retrieve better sources on failure (<b>CRAG</b>) — is deferred to Phase&nbsp;2.</div>
+    </div>
+  </section>
+
+  <!-- 07 — RUNNING SUMMARY -->
+  <section class="clause">
+    <div class="clause-no">§ 07</div>
+    <div class="clause-body">
+      <p class="subhead">Coherence · memory that flows forward</p>
+      <h2>Each section is written knowing the ones before it.</h2>
+      <p class="lead">In plain RAG every query is independent. Here, a growing
+      <span class="mono">running_summary</span> of prior sections is fed into the next draft —
+      so definitions stay consistent, nothing repeats, and “as set out above” actually resolves.</p>
+
+      <figure>
+        <svg viewBox="0 0 920 210" role="img" aria-label="running summary flowing forward">
+          <defs><marker id="a4" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#8a2b1f"/></marker></defs>
+          <g font-family="ui-monospace,monospace">
+            <rect x="30"  y="70" width="150" height="60" rx="3" fill="#e8e0cf" stroke="#1c1a15"/>
+            <text x="105" y="96" text-anchor="middle" font-size="13" font-weight="700">§ Scope</text>
+            <text x="105" y="114" text-anchor="middle" font-size="9" fill="#4a453a">section 1</text>
+            <rect x="255" y="70" width="150" height="60" rx="3" fill="#e8e0cf" stroke="#1c1a15"/>
+            <text x="330" y="96" text-anchor="middle" font-size="13" font-weight="700">§ Payment</text>
+            <text x="330" y="114" text-anchor="middle" font-size="9" fill="#4a453a">section 2</text>
+            <rect x="480" y="70" width="150" height="60" rx="3" fill="#e8e0cf" stroke="#1c1a15"/>
+            <text x="555" y="96" text-anchor="middle" font-size="13" font-weight="700">§ Termination</text>
+            <text x="555" y="114" text-anchor="middle" font-size="9" fill="#4a453a">section 3</text>
+            <rect x="705" y="66" width="180" height="68" rx="3" fill="#f2ece0" stroke="#8a2b1f" stroke-width="1.6"/>
+            <text x="795" y="92" text-anchor="middle" font-size="13" font-weight="700" fill="#8a2b1f">§ 4 · drafting…</text>
+            <text x="795" y="112" text-anchor="middle" font-size="9.5" fill="#4a453a">reads 1–3 as</text>
+            <text x="795" y="126" text-anchor="middle" font-size="9.5" fill="#4a453a">CONTEXT SO FAR</text>
+          </g>
+          <!-- accumulation arcs -->
+          <path d="M180,72 C240,30 260,30 320,66"  fill="none" stroke="#8a2b1f" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#a4)"/>
+          <path d="M405,72 C470,30 490,30 560,66"  fill="none" stroke="#8a2b1f" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#a4)"/>
+          <path d="M630,72 C690,30 710,30 790,62"  fill="none" stroke="#8a2b1f" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#a4)"/>
+          <text x="455" y="24" text-anchor="middle" font-size="10.5" fill="#8a2b1f" font-weight="700" font-family="ui-monospace,monospace">running_summary accumulates →</text>
+          <text x="455" y="176" text-anchor="middle" font-size="11" fill="#8a8069">appended at each commit · fed into the next draft</text>
+        </svg>
+        <figcaption>context is composed per step: fresh retrieval + accumulated summary + the outline</figcaption>
+      </figure>
+
+      <div class="aha"><span class="tag">stand-in for index b</span>
+        In v1 it's the full concatenated text (fine for a short doc). At 100-page scale, this
+        same field becomes <b>Index B</b> — <i>retrieving</i> only the relevant prior sections
+        instead of carrying all of them. Deferred to Phase&nbsp;2.</div>
+    </div>
+  </section>
+
+  <footer>
+    LexiGraph · agentic RAG field notes — the parts that differ from plain RAG.
+    Full flow &amp; setup in the <a class="top" href="../README.md">README</a>.
+  </footer>
+
+</div>
+</body>
+</html>

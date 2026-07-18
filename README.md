@@ -4,6 +4,10 @@ Agentic RAG that ingests legal precedent PDFs and drafts short, citation-grounde
 multi-section documents. Built as a Planner–Drafter–Evaluator loop over a
 parent-child hybrid retrieval index.
 
+> **New here? Start with the visual walkthrough → [`docs/concepts.html`](docs/concepts.html)**
+> The seven things that make this *not* plain RAG — two-store split, dedupe-before-rerank,
+> the verify-and-redraft loop, and memory that flows forward. Open it in a browser.
+
 ## Stack
 - **API:** FastAPI
 - **Ingestion:** Unstructured.io (serverless) → parent chunks → derived child chunks
