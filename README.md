@@ -4,9 +4,10 @@ Agentic RAG that ingests legal precedent PDFs and drafts short, citation-grounde
 multi-section documents. Built as a Planner–Drafter–Evaluator loop over a
 parent-child hybrid retrieval index.
 
-> **New here? Start with the visual walkthrough → [`docs/concepts.html`](docs/concepts.html)**
+> **New here? Start with the visual walkthrough → [pra2107tham.github.io/lexigraph/concepts.html](https://pra2107tham.github.io/lexigraph/concepts.html)**
 > The seven things that make this *not* plain RAG — two-store split, dedupe-before-rerank,
-> the verify-and-redraft loop, and memory that flows forward. Open it in a browser.
+> the verify-and-redraft loop, and memory that flows forward.
+> _(source: [`docs/concepts.html`](docs/concepts.html))_
 
 ## Stack
 - **API:** FastAPI
