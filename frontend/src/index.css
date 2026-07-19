@@ -1,0 +1,107 @@
+@import "tailwindcss";
+
+/* §2.1 green design system — counsel green on parchment.
+   Green is the primary/action color; the v1 oxblood is retired to a warning
+   accent only (needs_review), because red must stay meaningful to a lawyer. */
+:root {
+  --paper: #f3f0e7;
+  --paper-deep: #e9e5d6;
+  --ink: #17211b;
+  --ink-soft: #45514a;
+  --counsel: #1d5c47;
+  --emerald-live: #2e8b6a;
+  --bronze: #8a6d1e;
+  --alert: #a33d2a;
+  --rule: #c6c2ad;
+
+  /* shadcn semantic tokens mapped onto the palette */
+  --background: var(--paper);
+  --foreground: var(--ink);
+  --card: var(--paper-deep);
+  --card-foreground: var(--ink);
+  --popover: var(--paper);
+  --popover-foreground: var(--ink);
+  --primary: var(--counsel);
+  --primary-foreground: var(--paper);
+  --secondary: var(--paper-deep);
+  --secondary-foreground: var(--ink);
+  --muted: var(--paper-deep);
+  --muted-foreground: var(--ink-soft);
+  --accent: var(--paper-deep);
+  --accent-foreground: var(--counsel);
+  --destructive: var(--alert);
+  --destructive-foreground: var(--paper);
+  --border: var(--rule);
+  --input: var(--rule);
+  --ring: var(--counsel);
+  --radius: 0.5rem;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-counsel: #1d5c47;
+  --color-emerald-live: #2e8b6a;
+  --color-bronze: #8a6d1e;
+  --color-alert: #a33d2a;
+  --color-paper: #f3f0e7;
+  --color-paper-deep: #e9e5d6;
+  --color-ink: #17211b;
+  --color-ink-soft: #45514a;
+  --color-rule: #c6c2ad;
+
+  --font-serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --font-mono: "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+  body {
+    background: radial-gradient(ellipse at top, #f6f3ea 0%, var(--paper) 55%);
+    color: var(--foreground);
+    font-family: var(--font-serif);
+    min-height: 100vh;
+  }
+  :focus-visible {
+    outline: 2px solid var(--counsel);
+    outline-offset: 2px;
+  }
+}
+
+/* Advocates print: hide chrome, keep the document. Citation chips render as
+   plain [n]; per-section citation lists become the printed footnotes. */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: white;
+  }
+  .doc-panel {
+    overflow: visible !important;
+  }
+}
