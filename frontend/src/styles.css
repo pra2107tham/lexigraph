@@ -88,6 +88,9 @@ button:hover:not(:disabled) { transform: translateY(-1px); }
 button:disabled { opacity: 0.4; cursor: not-allowed; }
 button:focus-visible { outline: 2px solid var(--seal-soft); outline-offset: 2px; }
 .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.loadjob { display: flex; gap: 6px; margin: 4px 0 6px; }
+.loadjob input { flex: 1; font-size: 13px; padding: 7px 10px; }
+.loadjob button { padding: 7px 12px; }
 
 .dropzone {
   border: 1.5px dashed var(--rule); border-radius: 4px; padding: 20px 16px;

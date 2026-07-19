@@ -58,5 +58,8 @@ if [[ ! -f .env ]]; then
 fi
 
 # 4. Launch
+# NOTE: no --reload. A blocking /run can take minutes; --reload's file watcher
+# will kill the worker mid-run on any file change (e.g. a frontend rebuild),
+# stranding the job. Use --reload only for API code dev, never during a real run.
 echo "==> Starting LexiGraph on http://$HOST:$PORT  (docs at /docs)"
-exec uvicorn app.main:app --host "$HOST" --port "$PORT" --reload
+exec uvicorn app.main:app --host "$HOST" --port "$PORT"

@@ -79,7 +79,8 @@ export default function App() {
   const [files, setFiles] = useState([]);
   const [drag, setDrag] = useState(false);
   const [prompt, setPrompt] = useState("");
-  const [jobId, setJobId] = useState(null);
+  const [jobId, setJobId] = useState(() => localStorage.getItem("lexi_job_id"));
+  const [loadId, setLoadId] = useState("");
   const [outline, setOutline] = useState(null);
   const [sections, setSections] = useState(null);
   const [viz, setViz] = useState(EMPTY_VIZ);
@@ -87,6 +88,24 @@ export default function App() {
   const [err, setErr] = useState(null);
   const [speed, setSpeed] = useState(1);
   const speedRef = useRef(1);
+
+  // Remember the current job across refreshes so a finished doc isn't lost.
+  const rememberJob = (id) => {
+    localStorage.setItem("lexi_job_id", id);
+    setJobId(id);
+  };
+
+  // Load a finished job's sections directly (skips the run; just view result).
+  const onLoadJob = (id) =>
+    guard(async () => {
+      const target = (id || loadId || jobId || "").trim();
+      if (!target) throw new Error("Enter a job id to load.");
+      const { sections } = await getSections(target); // 409 if not done yet
+      rememberJob(target);
+      setSections(sections);
+      setStep(3);
+      setViz({ ...EMPTY_VIZ, activeNode: null, log: ["loaded finished job"] });
+    });
 
   const guard = async (fn) => {
     setErr(null);
@@ -109,7 +128,7 @@ export default function App() {
   const onCreateJob = () =>
     guard(async () => {
       const { job_id, outline } = await createJob(prompt);
-      setJobId(job_id);
+      rememberJob(job_id);
       setOutline(outline);
       setStep(2);
     });
@@ -148,6 +167,25 @@ export default function App() {
           Draft, <em>grounded</em>.
         </h1>
         <p className="tagline">Upload precedent · propose an outline · watch it draft.</p>
+
+        {/* Load a finished job by id (survives refresh; run is blocking in v1). */}
+        <div className="loadjob">
+          <input
+            type="text"
+            placeholder="job id — view a finished document"
+            value={loadId}
+            onChange={(e) => setLoadId(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && onLoadJob()}
+          />
+          <button className="ghost" disabled={busy} onClick={() => onLoadJob()}>
+            Load
+          </button>
+        </div>
+        {jobId && (
+          <div className="hint" style={{ marginBottom: 14 }}>
+            current job: <span className="filechip">{jobId.slice(0, 8)}…</span>
+          </div>
+        )}
 
         {STEPS.map((label, i) => (
           <div
