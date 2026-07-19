@@ -11,12 +11,18 @@ Job lifecycle:
 
 from __future__ import annotations
 
+import asyncio
+import queue
+import threading
 import uuid
 from datetime import datetime, timezone
 
 from typing import Annotated
 from fastapi import APIRouter, Form, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+
+from app.drafting import events
 
 from app.api.sessions import add_message, set_title_once
 from app.config import get_settings
@@ -153,6 +159,68 @@ def resume_job(job_id: str) -> dict:
     if job.get("status") not in ("failed", "running"):
         raise HTTPException(status_code=409, detail=f"job status: {job.get('status')}")
     return _execute_run(job)
+
+
+def _run_job_thread(job: dict) -> None:
+    """Worker for the SSE run: same lifecycle as /run, plus terminal events."""
+    job_id = job["_id"]
+    events.emit(job_id, "job_start",
+                n_sections=len(job["outline"]["sections"]),
+                section_titles=[s["title"] for s in job["outline"]["sections"]])
+    try:
+        try:
+            _execute_run(job)
+        except HTTPException as e:
+            events.emit(job_id, "error", where="run", message=str(e.detail))
+        else:
+            events.emit(job_id, "job_done",
+                        document=mongo.jobs().find_one({"_id": job_id}).get("document"))
+    finally:
+        # let the generator drain the terminal event before tearing down
+        events.close(job_id)
+
+
+def _snapshot(job_id: str, job: dict) -> dict:
+    """Mongo-derived resume point for (re)connecting clients (§7)."""
+    committed = list(mongo.drafted_sections().find({"job_id": job_id}, {"_id": 0}))
+    order = {s["section_id"]: i for i, s in enumerate(job["outline"]["sections"])}
+    committed.sort(key=lambda r: order.get(r["section_id"], 99))
+    return {"type": "job_snapshot",
+            "data": {"cursor": len(committed), "committed_sections": committed}}
+
+
+@router.get("/jobs/{job_id}/run/stream")
+async def run_stream(job_id: str):
+    """§7 live drafting stream. approved/failed -> starts the run in a worker
+    thread; running -> attaches to the existing queue. Data-only JSON frames."""
+    job = _get_job(job_id)
+    status = job.get("status")
+    if status not in ("approved", "failed", "running"):
+        raise HTTPException(status_code=409, detail=f"job status: {status}")
+    if not job["outline"].get("approved"):
+        raise HTTPException(status_code=409, detail="outline not approved")
+
+    q = events.channel(job_id)
+    if not (status == "running" and events.is_open(job_id)):
+        threading.Thread(target=_run_job_thread, args=(job,), daemon=True).start()
+
+    async def gen():
+        yield events.sse(_snapshot(job_id, job))
+        while True:
+            try:
+                ev = await asyncio.to_thread(q.get, True, 15.0)
+            except queue.Empty:
+                yield ": ping\n\n"  # keepalive; doubles as a liveness probe
+                continue
+            yield events.sse(ev)
+            if ev["type"] in ("job_done", "error"):
+                return
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/jobs/{job_id}")

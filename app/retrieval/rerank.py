@@ -24,7 +24,7 @@ def _client() -> cohere.ClientV2:
     return cohere.ClientV2(api_key=get_settings().cohere_api_key)
 
 
-def _dedupe_parents(points: list[models.ScoredPoint]) -> list[ParentChunk]:
+def dedupe_parents(points: list[models.ScoredPoint]) -> list[ParentChunk]:
     """First occurrence wins (points arrive in fused-rank order)."""
     seen: set[str] = set()
     parents: list[ParentChunk] = []
@@ -49,7 +49,10 @@ def rerank(
     query: str, points: list[models.ScoredPoint], top_n: int = 5
 ) -> list[ParentChunk]:
     """Rerank hybrid-search hits and return the top-n distinct parent chunks."""
-    parents = _dedupe_parents(points)
+    return rerank_parents(query, dedupe_parents(points), top_n)
+
+
+def rerank_parents(query: str, parents: list[ParentChunk], top_n: int = 5) -> list[ParentChunk]:
     if not parents:
         return []
 

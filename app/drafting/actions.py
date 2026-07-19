@@ -16,15 +16,24 @@ Each action reads/writes only the fields it needs, so the flow is inspectable.
 from __future__ import annotations
 
 from dataclasses import asdict
+from functools import partial
 
 from burr.core import State, action
 
 from app.config import get_settings
+from app.drafting import events
 from app.drafting.evaluator import evaluate_draft
 from app.drafting.llm import check_claims, draft_section
 from app.models import DraftedSection, ParentChunk
 from app.retrieval.retriever import retrieve
 from app.stores import mongo
+
+
+def _emitter(state: State):
+    """emit(type, **data) scoped to the current job + section (§7)."""
+    section = state["sections"][state["cursor"]]
+    return partial(events.emit, state["job_id"],
+                   section_id=section["section_id"], section_index=state["cursor"])
 
 
 def _feedback(report: dict) -> str:
@@ -36,21 +45,27 @@ def _feedback(report: dict) -> str:
     return "\n".join(lines)
 
 
-@action(reads=["sections", "cursor", "session_id"], writes=["candidates", "retries"])
+@action(reads=["sections", "cursor", "session_id", "job_id"], writes=["candidates", "retries"])
 def retrieve_sources(state: State) -> State:
     section = state["sections"][state["cursor"]]
+    emit = _emitter(state)
+    emit("section_start", title=section["title"], index=state["cursor"])
     query = f"{section['title']} — {section['instructions']}"
-    parents = retrieve(query, top_n=5, session_id=state["session_id"])
+    emit("retrieve_query", query=query)
+    parents = retrieve(query, top_n=5, session_id=state["session_id"], emit=emit)
     # A1: fresh section -> reset the redraft counter.
     return state.update(candidates=[p.model_dump() for p in parents], retries=0)
 
 
 @action(
-    reads=["sections", "cursor", "candidates", "running_summary", "retries", "eval_report"],
+    reads=["sections", "cursor", "candidates", "running_summary", "retries",
+           "eval_report", "job_id"],
     writes=["draft", "retries"],
 )
 def draft(state: State) -> State:
     section = state["sections"][state["cursor"]]
+    emit = _emitter(state)
+    emit("draft_start", attempt=state["retries"] + 1)
     sources = [ParentChunk(**c) for c in state["candidates"]]
     drafted = draft_section(
         section_id=section["section_id"],
@@ -61,11 +76,16 @@ def draft(state: State) -> State:
         # §4: redrafts name WHICH citations failed instead of redrafting blind.
         feedback=_feedback(state["eval_report"]) if state["retries"] > 0 else "",
     )
+    emit("draft_done", text_preview=drafted.text[:220],
+         citations=[c.model_dump() for c in drafted.citations])
     # A1: count this draft attempt; the evaluate->commit edge fires at the cap.
     return state.update(draft=drafted.model_dump(), retries=state["retries"] + 1)
 
 
-@action(reads=["draft", "candidates"], writes=["eval_ok", "eval_report", "draft"])
+@action(
+    reads=["draft", "candidates", "sections", "cursor", "job_id", "retries", "max_retries"],
+    writes=["eval_ok", "eval_report", "draft"],
+)
 def evaluate(state: State) -> State:
     """§4: Tier-1 deterministic quote verification, then one batched Tier-2
     entailment call. Failing citations are named in the report so the redraft
@@ -84,6 +104,12 @@ def evaluate(state: State) -> State:
     draft_out = state["draft"]
     if report.citations:  # tier 1 passed: persist the per-citation verdicts
         draft_out = {**draft_out, "citations": report.citations}
+
+    emit = _emitter(state)
+    emit("evaluate", eval_ok=report.eval_ok, attempt=state["retries"],
+         tier1_failed=report.tier1_failed, unverified=report.unverified)
+    if not report.eval_ok and state["retries"] < state["max_retries"]:
+        emit("redraft", attempt=state["retries"] + 1, max=state["max_retries"])
     return state.update(eval_ok=report.eval_ok, eval_report=asdict(report), draft=draft_out)
 
 
@@ -117,6 +143,16 @@ def commit(state: State) -> State:
         {"_id": state["job_id"]},
         {"$set": {f"audit.per_section.{drafted.section_id}": {
             "attempts": state["retries"], "eval": state["eval_report"]}}},
+    )
+    # §7: carry the rendered /sections row (minus section_id, which rides on the
+    # event envelope) so the document panel appends the section live.
+    _emitter(state)(
+        "section_committed",
+        title=section["title"],
+        instructions=section.get("instructions", ""),
+        text=drafted.text,
+        citations=[c.model_dump() for c in drafted.citations],
+        needs_review=flagged,
     )
 
     summary = state["running_summary"]
