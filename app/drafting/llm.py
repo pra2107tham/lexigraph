@@ -5,8 +5,8 @@ one-line .env change. Mirascope ships a native `openrouter` provider, so no cust
 OpenAI-client wiring is needed — we register the key once and address models as
 `openrouter/<MODEL_ID>`. Two typed calls:
 
-  draft_section   -> DraftedSection (text + citations)
-  check_grounded  -> Grounded (yes/no + reason) for the evaluator (D4)
+  draft_section   -> DraftedSection (text + numbered citations)
+  check_claims    -> list[bool], one batched entailment call per section (§4 Tier 2)
 
 Prompt-caching note: native Anthropic cache_control is not guaranteed through
 OpenRouter, so v1 does not depend on it. System context is kept as a stable prefix
@@ -55,9 +55,8 @@ def _format_sources(sources: list[ParentChunk]) -> str:
     )
 
 
-class Grounded(BaseModel):
-    grounded: bool
-    reason: str
+class _ClaimVerdicts(BaseModel):
+    supported: list[bool]
 
 
 _DRAFT_SYSTEM = (
@@ -81,8 +80,13 @@ def draft_section(
     instructions: str,
     sources: list[ParentChunk],
     running_summary: str,
+    feedback: str = "",
 ) -> DraftedSection:
-    """Draft one section grounded strictly in the retrieved sources."""
+    """Draft one section grounded strictly in the retrieved sources.
+
+    `feedback` names the previous attempt's failed citations so redrafts are
+    targeted instead of blind (§4).
+    """
     user = (
         f"SOURCES:\n{_format_sources(sources)}\n\n"
         f"CONTEXT SO FAR (previously drafted, for consistency):\n"
@@ -90,6 +94,7 @@ def draft_section(
         f"Section id: {section_id}\n"
         f"Section title: {title}\n"
         f"Instructions: {instructions}"
+        + (f"\n\nPREVIOUS ATTEMPT FAILED:\n{feedback}" if feedback else "")
     )
     response = _model().call(
         [_system(_DRAFT_SYSTEM), _user(user)],
@@ -103,21 +108,21 @@ def draft_section(
     return drafted
 
 
-_GROUND_SYSTEM = (
-    "You verify citations. Decide whether the DRAFT TEXT can be reasonably "
-    "supported by the CITED SOURCE alone. Set grounded=true only if the source "
-    "substantiates the draft's claims; otherwise grounded=false with a short reason."
+_CLAIMS_SYSTEM = (
+    "You verify citations. For EACH numbered claim/quote pair, decide whether "
+    "the quoted source text reasonably supports the claim. Return `supported` "
+    "as a list of booleans, one per pair, in the same order."
 )
 
 
-def check_grounded(section_text: str, source: ParentChunk) -> Grounded:
-    """Ask the model whether section_text is supported by this cited source (D4)."""
-    user = (
-        f"CITED SOURCE (parent_id {source.parent_id}):\n{source.text}\n\n"
-        f"DRAFT TEXT:\n{section_text}"
+def check_claims(pairs: list[tuple[str, str]]) -> list[bool]:
+    """One batched entailment call for a whole section (§4 Tier 2)."""
+    if not pairs:
+        return []
+    user = "\n\n".join(
+        f"{i}. CLAIM: {claim}\n   QUOTE: {quote}" for i, (claim, quote) in enumerate(pairs, 1)
     )
-    response = _model().call(
-        [_system(_GROUND_SYSTEM), _user(user)],
-        format=Grounded,
-    )
-    return response.parse()
+    response = _model().call([_system(_CLAIMS_SYSTEM), _user(user)], format=_ClaimVerdicts)
+    verdicts = response.parse().supported
+    # models drift on list lengths; missing verdicts count as unsupported
+    return (verdicts + [False] * len(pairs))[: len(pairs)]

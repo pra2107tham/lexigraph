@@ -50,6 +50,10 @@ class Settings(BaseSettings):
     # --- Drafting loop (A1: bound the redraft loop so it can't spin forever) ---
     max_redraft_retries: int = 3
 
+    # --- Evaluator (§4 two-tier claim-level groundedness) ---
+    entailment_pass_ratio: float = 0.8  # min share of supported claims to pass Tier 2
+    quote_match_threshold: float = 0.85  # fuzzy-match floor for Tier 1 quote verification
+
 
 @lru_cache
 def get_settings() -> Settings:

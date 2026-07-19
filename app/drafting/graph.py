@@ -75,6 +75,7 @@ def build_app(job_id: str, sections: list[dict], db_path: str = "lexigraph_burr.
             candidates=[],
             draft={},
             eval_ok=False,
+            eval_report={},
             drafted_sections=[],
             document=None,
             # A1: bound the redraft loop. retries resets per section (in retrieve),

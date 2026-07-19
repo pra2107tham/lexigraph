@@ -15,12 +15,25 @@ Each action reads/writes only the fields it needs, so the flow is inspectable.
 
 from __future__ import annotations
 
+from dataclasses import asdict
+
 from burr.core import State, action
 
-from app.drafting.llm import check_grounded, draft_section
+from app.config import get_settings
+from app.drafting.evaluator import evaluate_draft
+from app.drafting.llm import check_claims, draft_section
 from app.models import DraftedSection, ParentChunk
 from app.retrieval.retriever import retrieve
 from app.stores import mongo
+
+
+def _feedback(report: dict) -> str:
+    """Render an eval report as targeted redraft feedback (§4)."""
+    lines = [
+        f"citation [{f['index']}]: {f['reason']} (parent_id {f['parent_id']})"
+        for f in report.get("tier1_failed", [])
+    ] + [f"citation [{i}]: claim not supported by its quote" for i in report.get("unverified", [])]
+    return "\n".join(lines)
 
 
 @action(reads=["sections", "cursor"], writes=["candidates", "retries"])
@@ -33,7 +46,7 @@ def retrieve_sources(state: State) -> State:
 
 
 @action(
-    reads=["sections", "cursor", "candidates", "running_summary", "retries"],
+    reads=["sections", "cursor", "candidates", "running_summary", "retries", "eval_report"],
     writes=["draft", "retries"],
 )
 def draft(state: State) -> State:
@@ -45,32 +58,33 @@ def draft(state: State) -> State:
         instructions=section["instructions"],
         sources=sources,
         running_summary=state["running_summary"],
+        # §4: redrafts name WHICH citations failed instead of redrafting blind.
+        feedback=_feedback(state["eval_report"]) if state["retries"] > 0 else "",
     )
     # A1: count this draft attempt; the evaluate->commit edge fires at the cap.
     return state.update(draft=drafted.model_dump(), retries=state["retries"] + 1)
 
 
-@action(reads=["draft", "candidates"], writes=["eval_ok"])
+@action(reads=["draft", "candidates"], writes=["eval_ok", "eval_report", "draft"])
 def evaluate(state: State) -> State:
-    """D4: every citation must resolve to a candidate parent_id, and the cited
-    source must actually ground the text. Any failure -> rewrite.
+    """§4: Tier-1 deterministic quote verification, then one batched Tier-2
+    entailment call. Failing citations are named in the report so the redraft
+    is targeted; passing sections carry per-citation `verified` flags.
     """
+    settings = get_settings()
     drafted = DraftedSection(**state["draft"])
     by_id = {c["parent_id"]: ParentChunk(**c) for c in state["candidates"]}
-
-    if not drafted.citations:
-        return state.update(eval_ok=False)
-
-    ok = True
-    for cite in drafted.citations:
-        source = by_id.get(cite.parent_id)
-        if source is None:  # fabricated / non-candidate parent_id
-            ok = False
-            break
-        if not check_grounded(drafted.text, source).grounded:
-            ok = False
-            break
-    return state.update(eval_ok=ok)
+    report = evaluate_draft(
+        drafted,
+        by_id,
+        check=check_claims,
+        pass_ratio=settings.entailment_pass_ratio,
+        quote_threshold=settings.quote_match_threshold,
+    )
+    draft_out = state["draft"]
+    if report.citations:  # tier 1 passed: persist the per-citation verdicts
+        draft_out = {**draft_out, "citations": report.citations}
+    return state.update(eval_ok=report.eval_ok, eval_report=asdict(report), draft=draft_out)
 
 
 @action(
