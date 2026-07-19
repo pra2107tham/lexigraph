@@ -2,7 +2,26 @@
 
 Deferred work, ordered by whether it's a **correctness gap** (the loop can misbehave),
 an **agentic-quality improvement** (decisions get smarter), or a **product/UX** feature.
-Nothing here is built yet — this is the backlog for the next update.
+
+> **Authoritative plans:** the detailed v2 design (chat-first for advocates, green rebrand,
+> evaluator redesign) lives in `docs/superpowers/specs/2026-07-19-lexigraph-v2-design.md`;
+> far-horizon ideas (matters/case studies, clause library, privacy modes) in
+> `docs/superpowers/specs/2026-07-19-lexigraph-v3-ideas.md`. This file tracks gap status.
+
+## New findings from the first big-document run (2026-07-19)
+
+- **A5 — D4 evaluator is structurally too strict.** `check_grounded(section_text, source)`
+  judges the WHOLE section against ONE source "alone" — a multi-source section (one had 22
+  citations) can never pass, so every section burns its retries and lands `needs_review`
+  (observed: 10/10 flagged). Also cost: ~66 eval LLM calls for one section. Fix = claim-level
+  two-tier check (deterministic quote-in-source, then one batched entailment call) — v2 §4.
+- **A6 — draft output contract is dirty.** Raw parent_id UUIDs inline in body text, literal
+  unrendered markdown (`##`, `**`), duplicated section headings. Fix = numbered citation
+  markers + prompt rules + read-time post-processing + real markdown rendering — v2 §3/§6.
+- **A4 (upgraded) — run lifecycle.** A server death mid-run stranded a job at 8/10 in
+  `approved` with no `failed` state and no resume, exactly as A4 predicted. Promoted to a
+  required v2 feature (`running/failed` states + `POST /jobs/{id}/resume` via the existing
+  Burr SQLite checkpoints) — v2 §8.
 
 Phase-2 items already named in the plan (Index B episodic memory, CRAG entailment
 evaluator) are listed here too, tied to the concrete gaps they fix.
@@ -11,14 +30,11 @@ evaluator) are listed here too, tied to the concrete gaps they fix.
 
 ## A. Correctness gaps (the loop can misbehave today)
 
-### A1 — Redraft loop has no retry cap  ⚠️ highest priority
-`evaluate → draft → evaluate → draft …` (`graph.py:45`) has **no attempt counter**. If the
-retrieved sources genuinely can't ground the section, the loop spins **forever** and hangs
-the whole `POST /jobs/{id}/run` request.
-- **Fix:** add a `retries` counter in state (bump in `draft` or `evaluate`); add an exit edge
-  `("evaluate", "commit", expr("eval_ok == True or retries >= N"))`. On cap-out, commit the
-  best attempt with a `needs_review=True` flag rather than hanging.
-- **Ceiling:** degrade gracefully; never spin.
+### A1 — Redraft loop has no retry cap  ✅ DONE (v1, 2026-07-19)
+Shipped: `config.max_redraft_retries` (default 3), `retries`/`needs_review` in Burr state,
+`evaluate→commit` fires on `eval_ok or retries >= max`; capped sections commit best-effort
+flagged `needs_review`. Proven live: a 10-section job stayed bounded instead of hanging.
+Self-check: `scripts/test_retry_cap.py`.
 
 ### A2 — Failure re-drafts but never re-retrieves
 On `eval_ok == False` the loop returns to `draft` with the **same `candidates`**. If the
