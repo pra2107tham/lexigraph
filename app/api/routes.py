@@ -12,11 +12,13 @@ Job lifecycle:
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
 from typing import Annotated
 from fastapi import APIRouter, HTTPException, UploadFile
 from pydantic import BaseModel
 
+from app.config import get_settings
 from app.drafting.graph import build_app, run_to_completion
 from app.drafting.outline import generate_outline
 from app.drafting.postprocess import clean_section
@@ -79,19 +81,61 @@ def approve_outline(job_id: str, override: Outline | None = None) -> dict:
     return {"job_id": job_id, "approved": True, "n_sections": len(outline["sections"])}
 
 
+def _execute_run(job: dict) -> dict:
+    """§8 lifecycle: approved/failed -> running -> done | failed (with reason)."""
+    job_id = job["_id"]
+
+    def now() -> str:
+        return datetime.now(timezone.utc).isoformat()
+    mongo.jobs().update_one(
+        {"_id": job_id},
+        {"$set": {"status": "running", "audit.model_id": get_settings().model_id,
+                  "audit.started_at": now()}},
+    )
+    try:
+        app = build_app(job_id=job_id, sections=job["outline"]["sections"],
+                        session_id=job.get("session_id"))
+        document = run_to_completion(app)
+    except Exception as e:  # noqa: BLE001 — loop boundary: any failure marks the job
+        mongo.jobs().update_one(
+            {"_id": job_id},
+            {"$set": {"status": "failed", "error": {"where": "run", "message": str(e)}}},
+        )
+        raise HTTPException(status_code=500, detail=f"run failed: {e}") from e
+    mongo.jobs().update_one(
+        {"_id": job_id},
+        {"$set": {"status": "done", "document": document, "error": None,
+                  "audit.finished_at": now()}},
+    )
+    return {"job_id": job_id, "status": "done"}
+
+
 @router.post("/jobs/{job_id}/run")
 def run_job(job_id: str) -> dict:
     job = _get_job(job_id)
-    outline = job["outline"]
-    if not outline.get("approved"):
+    if not job["outline"].get("approved"):
         raise HTTPException(status_code=409, detail="outline not approved")
+    if job.get("status") not in ("approved", "failed"):
+        raise HTTPException(status_code=409, detail=f"job status: {job.get('status')}")
+    return _execute_run(job)
 
-    app = build_app(job_id=job_id, sections=outline["sections"])
-    document = run_to_completion(app)
-    mongo.jobs().update_one(
-        {"_id": job_id}, {"$set": {"status": "done", "document": document}}
-    )
-    return {"job_id": job_id, "status": "done"}
+
+@router.post("/jobs/{job_id}/resume")
+def resume_job(job_id: str) -> dict:
+    """§8: continue a failed (or crashed mid-'running') job from its last
+    Burr checkpoint; already-committed sections dedupe on re-commit."""
+    job = _get_job(job_id)
+    if job.get("status") not in ("failed", "running"):
+        raise HTTPException(status_code=409, detail=f"job status: {job.get('status')}")
+    return _execute_run(job)
+
+
+@router.get("/jobs/{job_id}")
+def get_job(job_id: str) -> dict:
+    job = _get_job(job_id)
+    return {"job_id": job_id, "status": job.get("status"),
+            "error": job.get("error"), "audit": job.get("audit"),
+            "session_id": job.get("session_id")}
 
 
 @router.get("/jobs/{job_id}/document")

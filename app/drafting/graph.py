@@ -53,38 +53,53 @@ def build_graph():
     )
 
 
-def build_app(job_id: str, sections: list[dict], db_path: str = "lexigraph_burr.db"):
-    """Build the drafting application for a job.
-
-    State is initialized from the APPROVED outline sections. The persister lets a
-    job pause (human review) and resume without losing progress.
-    """
+def _initial_state(job_id: str, sections: list[dict], session_id: str | None) -> dict:
     from app.config import get_settings
 
+    return dict(
+        job_id=job_id,
+        session_id=session_id,
+        sections=sections,
+        cursor=0,
+        running_summary="",
+        candidates=[],
+        draft={},
+        eval_ok=False,
+        eval_report={},
+        drafted_sections=[],
+        document=None,
+        # A1: bound the redraft loop. retries resets per section (in retrieve),
+        # increments per draft; the evaluate->commit edge fires at the cap.
+        retries=0,
+        max_retries=get_settings().max_redraft_retries,
+        needs_review=[],
+    )
+
+
+def build_app(
+    job_id: str,
+    sections: list[dict],
+    session_id: str | None = None,
+    db_path: str = "lexigraph_burr.db",
+):
+    """Build the drafting application for a job.
+
+    §8: `initialize_from` makes every run resume-capable — a fresh job starts
+    from `_initial_state`, while a crashed/failed one reloads its last SQLite
+    checkpoint (app_id=job_id) and continues from the last committed section.
+    """
     persister = SQLitePersister(db_path=db_path, table_name="burr_state")
     persister.initialize()
 
     return (
         ApplicationBuilder()
         .with_graph(build_graph())
-        .with_state(
-            job_id=job_id,
-            sections=sections,
-            cursor=0,
-            running_summary="",
-            candidates=[],
-            draft={},
-            eval_ok=False,
-            eval_report={},
-            drafted_sections=[],
-            document=None,
-            # A1: bound the redraft loop. retries resets per section (in retrieve),
-            # increments per draft; the evaluate->commit edge fires at the cap.
-            retries=0,
-            max_retries=get_settings().max_redraft_retries,
-            needs_review=[],
+        .initialize_from(
+            persister,
+            resume_at_next_action=True,
+            default_state=_initial_state(job_id, sections, session_id),
+            default_entrypoint="retrieve",
         )
-        .with_entrypoint("retrieve")
         .with_identifiers(app_id=job_id)
         .with_state_persister(persister)
         .build()

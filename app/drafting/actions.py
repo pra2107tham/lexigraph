@@ -89,7 +89,7 @@ def evaluate(state: State) -> State:
 
 @action(
     reads=["job_id", "draft", "cursor", "sections", "drafted_sections",
-           "running_summary", "eval_ok", "needs_review"],
+           "running_summary", "eval_ok", "needs_review", "retries", "eval_report"],
     writes=["drafted_sections", "cursor", "running_summary", "needs_review"],
 )
 def commit(state: State) -> State:
@@ -101,13 +101,22 @@ def commit(state: State) -> State:
     flagged = not state["eval_ok"]
     needs_review = state["needs_review"] + ([section["section_id"]] if flagged else [])
 
-    mongo.drafted_sections().insert_one(
+    # §8: replace-not-insert so a resumed run re-committing a section dedupes;
+    # Mongo is the source of truth for committed sections.
+    mongo.drafted_sections().replace_one(
+        {"job_id": state["job_id"], "section_id": drafted.section_id},
         {
             **drafted.model_dump(),
             "job_id": state["job_id"],
             "title": section["title"],
             "needs_review": flagged,
-        }
+        },
+        upsert=True,
+    )
+    mongo.jobs().update_one(
+        {"_id": state["job_id"]},
+        {"$set": {f"audit.per_section.{drafted.section_id}": {
+            "attempts": state["retries"], "eval": state["eval_report"]}}},
     )
 
     summary = state["running_summary"]
