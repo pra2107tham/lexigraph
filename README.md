@@ -9,6 +9,9 @@ parent-child hybrid retrieval index.
 > the verify-and-redraft loop, and memory that flows forward.
 > _(source: [`docs/concepts.html`](docs/concepts.html))_
 
+> **Known gaps & what's next → [`ROADMAP.md`](ROADMAP.md)** — retry cap, session scoping
+> (chat-with-your-docs), corpus-aware outlines, and the Phase-2 CRAG + Index B work.
+
 ## Stack
 - **API:** FastAPI
 - **Ingestion:** Unstructured.io (serverless) → parent chunks → derived child chunks
