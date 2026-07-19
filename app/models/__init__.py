@@ -39,6 +39,8 @@ class OutlineSection(BaseModel):
     section_id: str = Field(default_factory=_uuid)
     title: str
     instructions: str
+    # B1: which uploaded documents inform this section (shown on the outline card)
+    source_files: list[str] = Field(default_factory=list)
 
 
 class Outline(BaseModel):

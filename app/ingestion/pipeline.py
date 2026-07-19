@@ -12,6 +12,7 @@ import uuid
 from qdrant_client import models
 
 from app.config import get_settings
+from app.drafting.llm import summarize_doc
 from app.ingestion.chunking import derive_children
 from app.ingestion.partition import partition_pdf
 from app.models import ChildChunk, ParentChunk
@@ -32,6 +33,7 @@ def _persist_truth(
             "_id": mongo_doc_id,
             "source_file": file_name,
             "session_id": session_id,
+            "abstract": summarize_doc(parents),  # B1: feeds corpus-aware outlines
             "n_elements": len(raw_elements),
             "n_parents": len(parents),
             "raw_elements": raw_elements,

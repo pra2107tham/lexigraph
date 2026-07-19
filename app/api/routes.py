@@ -66,7 +66,7 @@ class CreateJob(BaseModel):
 @router.post("/jobs")
 def create_job(body: CreateJob) -> dict:
     job_id = str(uuid.uuid4())
-    outline = generate_outline(job_id, body.prompt)
+    outline = generate_outline(job_id, body.prompt, session_id=body.session_id)
     mongo.jobs().insert_one(
         {"_id": job_id, "prompt": body.prompt, "session_id": body.session_id,
          "outline": outline.model_dump(), "status": "outline_pending"}

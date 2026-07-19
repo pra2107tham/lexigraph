@@ -16,7 +16,7 @@ def test_job_creation_appends_timeline_and_title(client, monkeypatch):
 
     monkeypatch.setattr(
         routes, "generate_outline",
-        lambda job_id, prompt: Outline(job_id=job_id, sections=[OutlineSection(title="T", instructions="i")]),
+        lambda job_id, prompt, **kw: Outline(job_id=job_id, sections=[OutlineSection(title="T", instructions="i")]),
     )
     monkeypatch.setattr(routes, "make_title", lambda prompt: "Appointment Letter Summary")
 

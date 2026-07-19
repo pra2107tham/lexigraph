@@ -112,6 +112,28 @@ class _Title(BaseModel):
     title: str
 
 
+class _Abstract(BaseModel):
+    abstract: str
+
+
+def summarize_doc(parents: list[ParentChunk]) -> str:
+    """2-3 sentence abstract from a doc's leading parents (B1). Never fails
+    ingestion: any LLM error degrades to an empty abstract."""
+    if not parents:
+        return ""
+    try:
+        text = "\n\n".join(p.text for p in parents[:6])[:6000]
+        response = _model().call(
+            [_system("Summarize this legal document in 2-3 sentences: what it is, "
+                     "the parties/subject, and its key terms."),
+             _user(text)],
+            format=_Abstract,
+        )
+        return response.parse().abstract.strip()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def make_title(prompt: str) -> str:
     """3-6 word session title from the first prompt; falls back to a truncation
     so sessions still get named when no LLM is reachable."""
