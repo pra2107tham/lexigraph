@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 
 from typing import Annotated
 from fastapi import APIRouter, Form, HTTPException, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 from app.drafting import events
@@ -255,6 +255,32 @@ def get_document(job_id: str) -> dict:
     if job.get("status") != "done":
         raise HTTPException(status_code=409, detail=f"job status: {job.get('status')}")
     return {"job_id": job_id, "document": job["document"]}
+
+
+@router.get("/jobs/{job_id}/export")
+def export_job(job_id: str, format: str = "docx") -> Response:
+    """§9: download the drafted document as DOCX or markdown."""
+    from app.export.docx_export import job_to_docx, job_to_markdown
+
+    job = _get_job(job_id)
+    if job.get("status") != "done":
+        raise HTTPException(status_code=409, detail=f"job status: {job.get('status')}")
+    sections = get_sections(job_id)["sections"]  # read-time-cleaned, outline order
+    disclaimer = get_settings().export_disclaimer
+
+    if format == "md":
+        return Response(
+            job_to_markdown(job, sections, disclaimer),
+            media_type="text/markdown",
+            headers={"Content-Disposition": f'attachment; filename="lexigraph-{job_id[:8]}.md"'},
+        )
+    if format != "docx":
+        raise HTTPException(status_code=422, detail="format must be docx or md")
+    return Response(
+        job_to_docx(job, sections, disclaimer),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="lexigraph-{job_id[:8]}.docx"'},
+    )
 
 
 @router.get("/jobs/{job_id}/sections")
