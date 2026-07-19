@@ -19,8 +19,9 @@ from pydantic import BaseModel
 
 from app.drafting.graph import build_app, run_to_completion
 from app.drafting.outline import generate_outline
+from app.drafting.postprocess import clean_section
 from app.ingestion.pipeline import ingest_pdf
-from app.models import Outline
+from app.models import Citation, Outline
 from app.stores import mongo
 
 router = APIRouter()
@@ -120,13 +121,17 @@ def get_sections(job_id: str) -> dict:
     for sec in job["outline"]["sections"]:
         d = by_id.get(sec["section_id"])
         if d:
+            # Read-time cleanup: idempotent on v2 rows, repairs legacy v1 rows
+            # (inline UUIDs, duplicated headings) without a data migration.
+            citations = [Citation(**c) for c in d.get("citations", [])]
+            text, citations = clean_section(d.get("text", ""), sec["title"], citations)
             ordered.append(
                 {
                     "section_id": sec["section_id"],
                     "title": sec["title"],
                     "instructions": sec.get("instructions", ""),
-                    "text": d.get("text", ""),
-                    "citations": d.get("citations", []),
+                    "text": text,
+                    "citations": [c.model_dump() for c in citations],
                     "needs_review": d.get("needs_review", False),
                 }
             )

@@ -111,6 +111,9 @@ def commit(state: State) -> State:
 def assemble(state: State) -> State:
     parts = []
     for sec, drafted in zip(state["sections"], state["drafted_sections"]):
-        cites = "; ".join(c["parent_id"] for c in drafted["citations"])
-        parts.append(f"## {sec['title']}\n\n{drafted['text']}\n\n_Citations: {cites}_")
+        sources = "\n".join(
+            f"{i}. _{c.get('source_file') or 'unknown source'}_ — \"{c['quote']}\""
+            for i, c in enumerate(drafted["citations"], start=1)
+        )
+        parts.append(f"## {sec['title']}\n\n{drafted['text']}" + (f"\n\n{sources}" if sources else ""))
     return state.update(document="\n\n".join(parts))

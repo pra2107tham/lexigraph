@@ -22,6 +22,7 @@ from mirascope import llm
 from pydantic import BaseModel
 
 from app.config import get_settings
+from app.drafting.postprocess import clean_section
 from app.models import DraftedSection, ParentChunk
 
 
@@ -61,11 +62,16 @@ class Grounded(BaseModel):
 
 _DRAFT_SYSTEM = (
     "You are a legal drafting co-counsel. Draft the requested section using ONLY "
-    "the SOURCES provided. Every substantive claim or clause must be backed by a "
-    "citation whose parent_id EXACTLY matches one of the provided sources. Do not "
-    "invent parent_ids. If sources conflict on a term (e.g. Net 30 vs Net 60), "
-    "present BOTH positions and their sources explicitly — never average or "
-    "silently choose one. Set section_id to the id given in the instructions."
+    "the SOURCES provided. Write GitHub-flavored markdown (paragraphs, ### "
+    "sub-headings, lists, bold). Do NOT repeat the section title; start directly "
+    "with the content. Mark every substantive claim with a bracketed number [1], "
+    "[2]… and list each citation exactly once in `citations` in that order: the "
+    "citation's parent_id must EXACTLY match a provided source and its quote must "
+    "be a VERBATIM excerpt from that source supporting the claim. NEVER write "
+    "parent_ids in the text — only numbered markers. If sources conflict on a "
+    "term (e.g. Net 30 vs Net 60), present BOTH positions and their sources "
+    "explicitly — never average or silently choose one. Set section_id to the id "
+    "given in the instructions."
 )
 
 
@@ -89,7 +95,12 @@ def draft_section(
         [_system(_DRAFT_SYSTEM), _user(user)],
         format=DraftedSection,
     )
-    return response.parse()
+    drafted = response.parse()
+    files = {s.parent_id: s.source_file for s in sources}
+    for c in drafted.citations:
+        c.source_file = files.get(c.parent_id, "")
+    drafted.text, drafted.citations = clean_section(drafted.text, title, drafted.citations)
+    return drafted
 
 
 _GROUND_SYSTEM = (

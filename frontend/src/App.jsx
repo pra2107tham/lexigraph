@@ -6,6 +6,8 @@ import {
   runJob,
   getSections,
 } from "./api.js";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { replayJob } from "./replay.js";
 import Pipeline from "./Pipeline.jsx";
 
@@ -325,10 +327,12 @@ export default function App() {
                     {s.title}
                     {s.needs_review && <span className="needs-review">⚠ needs review</span>}
                   </h3>
-                  <div className="body">{s.text}</div>
+                  <div className="body">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{s.text}</ReactMarkdown>
+                  </div>
                   {s.citations.map((c, i) => (
                     <div className="cite" key={i}>
-                      <span className="pid">[{c.parent_id.slice(0, 8)}]</span> {c.quote}
+                      <span className="pid">[{i + 1}]</span> {c.source_file || "source"}: {c.quote}
                     </div>
                   ))}
                 </div>
