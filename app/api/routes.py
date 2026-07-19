@@ -15,11 +15,13 @@ import uuid
 from datetime import datetime, timezone
 
 from typing import Annotated
-from fastapi import APIRouter, HTTPException, UploadFile
+from fastapi import APIRouter, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
+from app.api.sessions import add_message, set_title_once
 from app.config import get_settings
 from app.drafting.graph import build_app, run_to_completion
+from app.drafting.llm import make_title
 from app.drafting.outline import generate_outline
 from app.drafting.postprocess import clean_section
 from app.ingestion.pipeline import ingest_pdf
@@ -32,11 +34,19 @@ router = APIRouter()
 # ---- documents -----------------------------------------------------------
 
 @router.post("/documents")
-async def upload_documents(files: list[UploadFile]) -> dict:
+async def upload_documents(
+    files: list[UploadFile], session_id: Annotated[str | None, Form()] = None
+) -> dict:
     results = []
     for f in files:
         content = await f.read()
-        results.append(ingest_pdf(content, f.filename or "upload.pdf"))
+        summary = ingest_pdf(content, f.filename or "upload.pdf", session_id=session_id)
+        add_message(session_id, "ingest_receipt", {
+            "source_file": summary["source_file"],
+            "mongo_doc_id": summary["mongo_doc_id"],
+            "n_parents": summary["n_parents"],
+        })
+        results.append(summary)
     return {"ingested": results}
 
 
@@ -44,6 +54,7 @@ async def upload_documents(files: list[UploadFile]) -> dict:
 
 class CreateJob(BaseModel):
     prompt: str  # e.g. "Draft a Master Services Agreement for ..."
+    session_id: str | None = None
 
 
 @router.post("/jobs")
@@ -51,9 +62,14 @@ def create_job(body: CreateJob) -> dict:
     job_id = str(uuid.uuid4())
     outline = generate_outline(job_id, body.prompt)
     mongo.jobs().insert_one(
-        {"_id": job_id, "prompt": body.prompt, "outline": outline.model_dump(),
-         "status": "outline_pending"}
+        {"_id": job_id, "prompt": body.prompt, "session_id": body.session_id,
+         "outline": outline.model_dump(), "status": "outline_pending"}
     )
+    if body.session_id:
+        set_title_once(body.session_id, make_title(body.prompt))
+        add_message(body.session_id, "user_prompt", {"text": body.prompt, "job_id": job_id})
+        add_message(body.session_id, "outline_card",
+                    {"job_id": job_id, "outline": outline.model_dump()})
     return {"job_id": job_id, "outline": outline.model_dump()}
 
 
@@ -92,6 +108,7 @@ def _execute_run(job: dict) -> dict:
         {"$set": {"status": "running", "audit.model_id": get_settings().model_id,
                   "audit.started_at": now()}},
     )
+    add_message(job.get("session_id"), "drafting_live", {"job_id": job_id})
     try:
         app = build_app(job_id=job_id, sections=job["outline"]["sections"],
                         session_id=job.get("session_id"))
@@ -107,6 +124,14 @@ def _execute_run(job: dict) -> dict:
         {"$set": {"status": "done", "document": document, "error": None,
                   "audit.finished_at": now()}},
     )
+    sections = list(mongo.drafted_sections().find({"job_id": job_id}, {"_id": 0}))
+    n_citations = sum(len(s.get("citations", [])) for s in sections)
+    add_message(job.get("session_id"), "document_ready", {
+        "job_id": job_id,
+        "n_sections": len(job["outline"]["sections"]),
+        "n_citations": n_citations,
+        "n_flagged": sum(1 for s in sections if s.get("needs_review")),
+    })
     return {"job_id": job_id, "status": "done"}
 
 

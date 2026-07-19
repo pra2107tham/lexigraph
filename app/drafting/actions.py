@@ -36,11 +36,11 @@ def _feedback(report: dict) -> str:
     return "\n".join(lines)
 
 
-@action(reads=["sections", "cursor"], writes=["candidates", "retries"])
+@action(reads=["sections", "cursor", "session_id"], writes=["candidates", "retries"])
 def retrieve_sources(state: State) -> State:
     section = state["sections"][state["cursor"]]
     query = f"{section['title']} — {section['instructions']}"
-    parents = retrieve(query, top_n=5)
+    parents = retrieve(query, top_n=5, session_id=state["session_id"])
     # A1: fresh section -> reset the redraft counter.
     return state.update(candidates=[p.model_dump() for p in parents], retries=0)
 

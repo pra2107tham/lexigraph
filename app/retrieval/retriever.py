@@ -10,6 +10,8 @@ from app.retrieval.rerank import rerank
 from app.retrieval.search import hybrid_search
 
 
-def retrieve(query: str, top_n: int = 5, candidates: int = 50) -> list[ParentChunk]:
-    points = hybrid_search(query, k=candidates)
+def retrieve(
+    query: str, top_n: int = 5, candidates: int = 50, session_id: str | None = None
+) -> list[ParentChunk]:
+    points = hybrid_search(query, k=candidates, session_id=session_id)
     return rerank(query, points, top_n=top_n)

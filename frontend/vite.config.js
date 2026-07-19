@@ -9,6 +9,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/documents": "http://localhost:8000",
+      "/sessions": "http://localhost:8000",
       "/jobs": "http://localhost:8000",
       "/health": "http://localhost:8000",
     },

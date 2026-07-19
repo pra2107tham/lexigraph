@@ -5,6 +5,7 @@ Collections:
   parents          ParentChunk records (looked up by parent_id at draft time)
   outlines         per-job outlines (with approval state)
   drafted_sections committed sections from the Burr loop
+  sessions         chat sessions: corpus scope + persisted message timeline (C1)
 """
 
 from __future__ import annotations
@@ -52,3 +53,7 @@ def drafted_sections():
 
 def jobs():
     return get_db()["jobs"]
+
+
+def sessions():
+    return get_db()["sessions"]

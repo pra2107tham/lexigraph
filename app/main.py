@@ -14,6 +14,7 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import router
+from app.api.sessions import router as sessions_router
 from app.config import get_settings
 from app.stores.qdrant import ensure_collection
 
@@ -28,8 +29,9 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="LexiGraph RAG", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="LexiGraph RAG", version="0.2.0", lifespan=lifespan)
 app.include_router(router)
+app.include_router(sessions_router)
 
 
 def custom_openapi():

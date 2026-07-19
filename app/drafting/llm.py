@@ -108,6 +108,24 @@ def draft_section(
     return drafted
 
 
+class _Title(BaseModel):
+    title: str
+
+
+def make_title(prompt: str) -> str:
+    """3-6 word session title from the first prompt; falls back to a truncation
+    so sessions still get named when no LLM is reachable."""
+    try:
+        response = _model().call(
+            [_system("Write a 3-6 word title for this legal drafting request. No quotes."),
+             _user(prompt)],
+            format=_Title,
+        )
+        return response.parse().title.strip() or prompt[:60]
+    except Exception:  # noqa: BLE001
+        return prompt[:60]
+
+
 _CLAIMS_SYSTEM = (
     "You verify citations. For EACH numbered claim/quote pair, decide whether "
     "the quoted source text reasonably supports the claim. Return `supported` "

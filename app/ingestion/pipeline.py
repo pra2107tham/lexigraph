@@ -21,13 +21,19 @@ from app.stores.qdrant import get_client
 
 
 def _persist_truth(
-    mongo_doc_id: str, file_name: str, raw_elements: list[dict], parents: list[ParentChunk]
+    mongo_doc_id: str,
+    file_name: str,
+    raw_elements: list[dict],
+    parents: list[ParentChunk],
+    session_id: str | None,
 ) -> None:
     mongo.documents().insert_one(
         {
             "_id": mongo_doc_id,
             "source_file": file_name,
+            "session_id": session_id,
             "n_elements": len(raw_elements),
+            "n_parents": len(parents),
             "raw_elements": raw_elements,
         }
     )
@@ -35,7 +41,9 @@ def _persist_truth(
         mongo.parents().insert_many([p.model_dump() for p in parents])
 
 
-def _persist_vectors(parents: list[ParentChunk], children: list[ChildChunk]) -> int:
+def _persist_vectors(
+    parents: list[ParentChunk], children: list[ChildChunk], session_id: str | None
+) -> int:
     """Embed child texts and upsert them into Index A. Returns points written."""
     if not children:
         return 0
@@ -58,6 +66,7 @@ def _persist_vectors(parents: list[ParentChunk], children: list[ChildChunk]) -> 
                     "parent_text": parent.text,
                     "mongo_doc_id": parent.mongo_doc_id,
                     "source_file": parent.source_file,
+                    "session_id": session_id,
                 },
             )
         )
@@ -67,8 +76,8 @@ def _persist_vectors(parents: list[ParentChunk], children: list[ChildChunk]) -> 
     return len(points)
 
 
-def ingest_pdf(file_bytes: bytes, file_name: str) -> dict:
-    """Ingest one PDF. Returns a summary of what was stored."""
+def ingest_pdf(file_bytes: bytes, file_name: str, session_id: str | None = None) -> dict:
+    """Ingest one PDF, optionally scoped to a session (C1). Returns a summary."""
     mongo_doc_id = str(uuid.uuid4())
 
     parents, raw_elements = partition_pdf(file_bytes, file_name, mongo_doc_id)
@@ -84,8 +93,8 @@ def ingest_pdf(file_bytes: bytes, file_name: str) -> dict:
             )
         )
 
-    _persist_truth(mongo_doc_id, file_name, raw_elements, parents)
-    n_points = _persist_vectors(parents, children)
+    _persist_truth(mongo_doc_id, file_name, raw_elements, parents, session_id)
+    n_points = _persist_vectors(parents, children, session_id)
 
     return {
         "mongo_doc_id": mongo_doc_id,
