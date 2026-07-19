@@ -99,3 +99,35 @@ def get_document(job_id: str) -> dict:
     if job.get("status") != "done":
         raise HTTPException(status_code=409, detail=f"job status: {job.get('status')}")
     return {"job_id": job_id, "document": job["document"]}
+
+
+@router.get("/jobs/{job_id}/sections")
+def get_sections(job_id: str) -> dict:
+    """Structured drafted sections (text + citations) for the UI replay animation.
+
+    The stitched `document` string loses per-citation quotes; the frontend pipeline
+    viz replays from this structured shape instead.
+    """
+    job = _get_job(job_id)
+    if job.get("status") != "done":
+        raise HTTPException(status_code=409, detail=f"job status: {job.get('status')}")
+    # Committed sections live in Mongo, scoped to this job; order by the outline.
+    by_id = {
+        d["section_id"]: d
+        for d in mongo.drafted_sections().find({"job_id": job_id}, {"_id": 0})
+    }
+    ordered = []
+    for sec in job["outline"]["sections"]:
+        d = by_id.get(sec["section_id"])
+        if d:
+            ordered.append(
+                {
+                    "section_id": sec["section_id"],
+                    "title": sec["title"],
+                    "instructions": sec.get("instructions", ""),
+                    "text": d.get("text", ""),
+                    "citations": d.get("citations", []),
+                    "needs_review": d.get("needs_review", False),
+                }
+            )
+    return {"job_id": job_id, "sections": ordered}

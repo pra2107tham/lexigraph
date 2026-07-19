@@ -3,8 +3,11 @@
 # Creates/activates a venv, installs deps, checks .env, and starts the API.
 #
 # Usage:
-#   ./run.sh            # install (first run) + start server on :8000
-#   ./run.sh --no-install   # skip pip install (faster restarts)
+#   ./run.sh                # install deps + build UI + start server on :8000
+#   ./run.sh --no-install   # skip pip install + UI build (faster restarts)
+#
+# The server serves the built UI at /. For live UI dev with hot reload instead,
+# run the backend here and, in another shell:  cd frontend && npm run dev  (:5173)
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -32,6 +35,17 @@ if [[ "$DO_INSTALL" == "1" ]]; then
     pip install -q -r requirements.lock.txt
   else
     pip install -q -r requirements.txt
+  fi
+fi
+
+# 2b. Frontend build (served statically by FastAPI at /). Skipped with --no-install
+#     or if node/frontend is absent — the API runs fine without a built UI.
+if [[ "$DO_INSTALL" == "1" && -f frontend/package.json ]]; then
+  if command -v npm >/dev/null 2>&1; then
+    echo "==> Building UI (frontend -> app/static)"
+    ( cd frontend && npm install --silent && npm run build --silent )
+  else
+    echo "!! npm not found — skipping UI build; API-only. Install Node to get the UI."
   fi
 fi
 

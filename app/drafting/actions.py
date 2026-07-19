@@ -23,17 +23,18 @@ from app.retrieval.retriever import retrieve
 from app.stores import mongo
 
 
-@action(reads=["sections", "cursor"], writes=["candidates"])
+@action(reads=["sections", "cursor"], writes=["candidates", "retries"])
 def retrieve_sources(state: State) -> State:
     section = state["sections"][state["cursor"]]
     query = f"{section['title']} — {section['instructions']}"
     parents = retrieve(query, top_n=5)
-    return state.update(candidates=[p.model_dump() for p in parents])
+    # A1: fresh section -> reset the redraft counter.
+    return state.update(candidates=[p.model_dump() for p in parents], retries=0)
 
 
 @action(
-    reads=["sections", "cursor", "candidates", "running_summary"],
-    writes=["draft"],
+    reads=["sections", "cursor", "candidates", "running_summary", "retries"],
+    writes=["draft", "retries"],
 )
 def draft(state: State) -> State:
     section = state["sections"][state["cursor"]]
@@ -45,7 +46,8 @@ def draft(state: State) -> State:
         sources=sources,
         running_summary=state["running_summary"],
     )
-    return state.update(draft=drafted.model_dump())
+    # A1: count this draft attempt; the evaluate->commit edge fires at the cap.
+    return state.update(draft=drafted.model_dump(), retries=state["retries"] + 1)
 
 
 @action(reads=["draft", "candidates"], writes=["eval_ok"])
@@ -72,15 +74,26 @@ def evaluate(state: State) -> State:
 
 
 @action(
-    reads=["draft", "cursor", "sections", "drafted_sections", "running_summary"],
-    writes=["drafted_sections", "cursor", "running_summary"],
+    reads=["job_id", "draft", "cursor", "sections", "drafted_sections",
+           "running_summary", "eval_ok", "needs_review"],
+    writes=["drafted_sections", "cursor", "running_summary", "needs_review"],
 )
 def commit(state: State) -> State:
     drafted = DraftedSection(**state["draft"])
     section = state["sections"][state["cursor"]]
 
+    # A1: if we reached commit without passing eval, it's the retry cap firing —
+    # save it but flag it so the API/document can surface "couldn't fully ground".
+    flagged = not state["eval_ok"]
+    needs_review = state["needs_review"] + ([section["section_id"]] if flagged else [])
+
     mongo.drafted_sections().insert_one(
-        {**drafted.model_dump(), "title": section["title"]}
+        {
+            **drafted.model_dump(),
+            "job_id": state["job_id"],
+            "title": section["title"],
+            "needs_review": flagged,
+        }
     )
 
     summary = state["running_summary"]
@@ -90,6 +103,7 @@ def commit(state: State) -> State:
         drafted_sections=state["drafted_sections"] + [drafted.model_dump()],
         cursor=state["cursor"] + 1,
         running_summary=summary,
+        needs_review=needs_review,
     )
 
 

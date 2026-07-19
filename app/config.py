@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     child_target_tokens: int = 256
     child_overlap_tokens: int = 20
 
+    # --- Drafting loop (A1: bound the redraft loop so it can't spin forever) ---
+    max_redraft_retries: int = 3
+
 
 @lru_cache
 def get_settings() -> Settings:

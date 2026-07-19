@@ -42,8 +42,10 @@ def build_graph():
         .with_transitions(
             ("retrieve", "draft"),
             ("draft", "evaluate"),
-            ("evaluate", "draft", expr("eval_ok == False")),
-            ("evaluate", "commit", expr("eval_ok == True")),
+            # A1: redraft only while retries remain; otherwise commit best-effort
+            # (commit flags needs_review) so the loop is provably bounded.
+            ("evaluate", "draft", expr("eval_ok == False and retries < max_retries")),
+            ("evaluate", "commit", expr("eval_ok == True or retries >= max_retries")),
             ("commit", "retrieve", expr("cursor < len(sections)")),
             ("commit", "assemble", expr("cursor >= len(sections)")),
         )
@@ -57,6 +59,8 @@ def build_app(job_id: str, sections: list[dict], db_path: str = "lexigraph_burr.
     State is initialized from the APPROVED outline sections. The persister lets a
     job pause (human review) and resume without losing progress.
     """
+    from app.config import get_settings
+
     persister = SQLitePersister(db_path=db_path, table_name="burr_state")
     persister.initialize()
 
@@ -64,6 +68,7 @@ def build_app(job_id: str, sections: list[dict], db_path: str = "lexigraph_burr.
         ApplicationBuilder()
         .with_graph(build_graph())
         .with_state(
+            job_id=job_id,
             sections=sections,
             cursor=0,
             running_summary="",
@@ -72,6 +77,11 @@ def build_app(job_id: str, sections: list[dict], db_path: str = "lexigraph_burr.
             eval_ok=False,
             drafted_sections=[],
             document=None,
+            # A1: bound the redraft loop. retries resets per section (in retrieve),
+            # increments per draft; the evaluate->commit edge fires at the cap.
+            retries=0,
+            max_retries=get_settings().max_redraft_retries,
+            needs_review=[],
         )
         .with_entrypoint("retrieve")
         .with_identifiers(app_id=job_id)

@@ -29,3 +29,8 @@ env/
 # Scratch / uploads
 /tmp_uploads/
 *.log
+
+# Frontend
+frontend/node_modules/
+# Built SPA bundle (produced by `vite build`); rebuilt from source, not committed
+app/static/
