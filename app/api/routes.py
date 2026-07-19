@@ -231,6 +231,24 @@ def get_job(job_id: str) -> dict:
             "session_id": job.get("session_id")}
 
 
+class ReviseSection(BaseModel):
+    instructions: str
+
+
+@router.post("/jobs/{job_id}/sections/{section_id}/revise")
+def revise_job_section(job_id: str, section_id: str, body: ReviseSection) -> dict:
+    """C3: one-section revision turn on a finished document."""
+    from app.drafting.revision import revise_section
+
+    job = _get_job(job_id)
+    if job.get("status") != "done":
+        raise HTTPException(status_code=409, detail=f"job status: {job.get('status')}")
+    row = revise_section(job, section_id, body.instructions)
+    add_message(job.get("session_id"), "revision",
+                {"job_id": job_id, "section_id": section_id, "instructions": body.instructions})
+    return {"job_id": job_id, "section": row}
+
+
 @router.get("/jobs/{job_id}/document")
 def get_document(job_id: str) -> dict:
     job = _get_job(job_id)

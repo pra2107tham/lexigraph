@@ -55,6 +55,38 @@ def list_sessions() -> dict:
                          for r in rows]}
 
 
+@router.get("/sessions/{session_id}/documents")
+def list_session_documents(session_id: str) -> dict:
+    rows = mongo.documents().find(
+        {"session_id": session_id}, {"source_file": 1, "abstract": 1, "n_parents": 1})
+    return {"documents": [{"mongo_doc_id": r["_id"], "source_file": r["source_file"],
+                           "abstract": r.get("abstract", ""), "n_parents": r.get("n_parents", 0)}
+                          for r in rows]}
+
+
+@router.delete("/sessions/{session_id}/documents/{doc_id}")
+def delete_session_document(session_id: str, doc_id: str) -> dict:
+    """C2: remove a document from the session corpus — Mongo truth rows and all
+    of its Qdrant child points (filtered delete on the indexed mongo_doc_id)."""
+    doc = mongo.documents().find_one({"_id": doc_id, "session_id": session_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="document not found in session")
+    mongo.documents().delete_one({"_id": doc_id})
+    mongo.parents().delete_many({"mongo_doc_id": doc_id})
+
+    from qdrant_client import models
+
+    from app.config import get_settings
+    from app.stores.qdrant import get_client
+
+    get_client().delete(
+        collection_name=get_settings().qdrant_collection,
+        points_selector=models.FilterSelector(filter=models.Filter(must=[
+            models.FieldCondition(key="mongo_doc_id", match=models.MatchValue(value=doc_id))])),
+    )
+    return {"deleted": doc_id, "source_file": doc["source_file"]}
+
+
 @router.get("/sessions/{session_id}")
 def get_session(session_id: str) -> dict:
     s = mongo.sessions().find_one({"_id": session_id})

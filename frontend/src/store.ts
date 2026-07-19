@@ -14,6 +14,7 @@ interface Store {
   activeSessionId: string | null;
   sessionTitle: string;
   timeline: Message[];
+  sessionDocs: api.SessionDoc[];
   outlineDrafts: Record<string, Outline>; // job_id -> in-progress outline edits
   live: { jobId: string; viz: Viz; status: "running" | "done" | "failed" } | null;
   doc: { jobId: string; sections: Section[] } | null;
@@ -27,6 +28,8 @@ interface Store {
   editOutline: (jobId: string, outline: Outline) => void;
   approveAndRun: (jobId: string) => Promise<void>;
   loadFinishedJob: (jobId: string) => Promise<void>;
+  removeDoc: (docId: string) => Promise<void>;
+  reviseSection: (sectionId: string, instructions: string) => Promise<void>;
   applyEvent: (ev: PipelineEvent) => void;
 }
 
@@ -34,8 +37,8 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export const useStore = create<Store>((set, get) => {
   const refreshTimeline = async (sessionId: string) => {
-    const s = await api.getSession(sessionId);
-    set({ timeline: s.messages, sessionTitle: s.title });
+    const [s, d] = await Promise.all([api.getSession(sessionId), api.listSessionDocs(sessionId)]);
+    set({ timeline: s.messages, sessionTitle: s.title, sessionDocs: d.documents });
   };
 
   const guard = async (fn: () => Promise<void>) => {
@@ -54,6 +57,7 @@ export const useStore = create<Store>((set, get) => {
     activeSessionId: localStorage.getItem("lexi_session_id"),
     sessionTitle: "",
     timeline: [],
+    sessionDocs: [],
     outlineDrafts: {},
     live: null,
     doc: null,
@@ -131,6 +135,29 @@ export const useStore = create<Store>((set, get) => {
       const { sections } = await api.getSections(jobId).catch(() => ({ sections: [] as Section[] }));
       if (sections.length) set({ doc: { jobId, sections } });
     },
+
+    removeDoc: (docId) =>
+      guard(async () => {
+        const sessionId = get().activeSessionId;
+        if (!sessionId) return;
+        await api.deleteSessionDoc(sessionId, docId);
+        const { documents } = await api.listSessionDocs(sessionId);
+        set({ sessionDocs: documents });
+      }),
+
+    reviseSection: (sectionId, instructions) =>
+      guard(async () => {
+        const { doc, activeSessionId } = get();
+        if (!doc) return;
+        const { section } = await api.reviseSection(doc.jobId, sectionId, instructions);
+        set({
+          doc: {
+            ...doc,
+            sections: doc.sections.map((s) => (s.section_id === sectionId ? section : s)),
+          },
+        });
+        if (activeSessionId) await refreshTimeline(activeSessionId);
+      }),
 
     applyEvent: (ev) => {
       set((s) => (s.live ? { live: { ...s.live, viz: applyVizEvent(s.live.viz, ev) } } : {}));

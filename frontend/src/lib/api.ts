@@ -48,3 +48,23 @@ export const getSession = (sessionId: string) =>
   fetch(`/sessions/${sessionId}`).then((r) =>
     j<{ session_id: string; title: string; messages: Message[] }>(r),
   );
+
+export interface SessionDoc {
+  mongo_doc_id: string;
+  source_file: string;
+  abstract: string;
+  n_parents: number;
+}
+
+export const listSessionDocs = (sessionId: string) =>
+  fetch(`/sessions/${sessionId}/documents`).then((r) => j<{ documents: SessionDoc[] }>(r));
+
+export const deleteSessionDoc = (sessionId: string, docId: string) =>
+  fetch(`/sessions/${sessionId}/documents/${docId}`, { method: "DELETE" }).then((r) =>
+    j<{ deleted: string }>(r),
+  );
+
+export const reviseSection = (jobId: string, sectionId: string, instructions: string) =>
+  post<{ job_id: string; section: Section }>(`/jobs/${jobId}/sections/${sectionId}/revise`, {
+    instructions,
+  });

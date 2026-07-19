@@ -1,11 +1,52 @@
 // Right pane: the drafted document, rendered as real markdown with per-section
-// citation footers. Fills section by section once SSE lands (step 6).
+// citation footers, filled section by section during a live run. Each section
+// carries a Revise affordance (C3 single-section revision turns).
 
+import { PenLine } from "lucide-react";
+import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { useStore } from "@/store";
+
+function ReviseBox({ sectionId }: { sectionId: string }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const { reviseSection, busy, live } = useStore();
+  if (live?.status === "running") return null;
+
+  if (!open) {
+    return (
+      <Button variant="ghost" size="sm" className="no-print text-ink-soft" onClick={() => setOpen(true)}>
+        <PenLine /> Revise
+      </Button>
+    );
+  }
+  return (
+    <form
+      className="no-print mt-1 flex gap-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!text.trim()) return;
+        void reviseSection(sectionId, text.trim()).then(() => {
+          setOpen(false);
+          setText("");
+        });
+      }}
+    >
+      <Input
+        autoFocus
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder="e.g. stricter on the notice period"
+      />
+      <Button size="sm" disabled={busy}>Redraft</Button>
+    </form>
+  );
+}
 
 export default function DocumentPanel() {
   const { doc } = useStore();
@@ -40,6 +81,7 @@ export default function DocumentPanel() {
               ))}
             </div>
           )}
+          <ReviseBox sectionId={s.section_id} />
         </section>
       ))}
     </aside>
