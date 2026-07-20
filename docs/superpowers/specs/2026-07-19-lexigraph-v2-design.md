@@ -1,6 +1,6 @@
 # LexiGraph v2 — Design Spec (Advocate Chat Edition)
 
-**Status:** design, not yet implemented. Supersedes the earlier draft of this file.
+**Status:** implemented — all §11 build-order steps shipped in PR #1. Supersedes the earlier draft of this file.
 **Product reframe:** v2 turns the developer console into a **chat-first assistant for legal
 advocates** — sessions like Claude/ChatGPT conversations, documents scoped per session, live
 drafting shown in-stream, and a citation experience an advocate can actually trust and verify.
