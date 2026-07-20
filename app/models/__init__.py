@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -38,6 +39,8 @@ class OutlineSection(BaseModel):
     section_id: str = Field(default_factory=_uuid)
     title: str
     instructions: str
+    # B1: which uploaded documents inform this section (shown on the outline card)
+    source_files: list[str] = Field(default_factory=list)
 
 
 class Outline(BaseModel):
@@ -49,9 +52,15 @@ class Outline(BaseModel):
 class Citation(BaseModel):
     parent_id: str
     quote: str
+    source_file: str = ""  # filled from the cited parent, never asked of the model
+    verified: Literal["quote_verified", "entailed", "unverified"] | None = None
 
 
 class DraftedSection(BaseModel):
+    """Section text uses numbered markers [1], [2]… referencing `citations` by
+    position (1-based). Text carries no parent_ids and no leading title heading.
+    """
+
     section_id: str
     text: str
     citations: list[Citation]

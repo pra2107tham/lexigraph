@@ -32,15 +32,26 @@ def ensure_collection() -> None:
     """
     settings = get_settings()
     client = get_client()
-    if client.collection_exists(settings.qdrant_collection):
-        return
-    client.create_collection(
-        collection_name=settings.qdrant_collection,
-        vectors_config={
-            "dense": models.VectorParams(
-                size=settings.dense_embed_dim,
-                distance=models.Distance.COSINE,
+    if not client.collection_exists(settings.qdrant_collection):
+        client.create_collection(
+            collection_name=settings.qdrant_collection,
+            vectors_config={
+                "dense": models.VectorParams(
+                    size=settings.dense_embed_dim,
+                    distance=models.Distance.COSINE,
+                )
+            },
+            sparse_vectors_config={"sparse": models.SparseVectorParams()},
+        )
+    # C1/C2: keyword indexes so filtered search (session scope) and filtered
+    # delete (document removal) stay fast on Qdrant Cloud. Idempotent-ish:
+    # re-creating an existing index raises on some versions, hence the guard.
+    for field in ("session_id", "mongo_doc_id"):
+        try:
+            client.create_payload_index(
+                collection_name=settings.qdrant_collection,
+                field_name=field,
+                field_schema=models.PayloadSchemaType.KEYWORD,
             )
-        },
-        sparse_vectors_config={"sparse": models.SparseVectorParams()},
-    )
+        except Exception:  # noqa: BLE001 — index already exists
+            pass

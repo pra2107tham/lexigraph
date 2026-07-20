@@ -25,3 +25,6 @@ mirascope                 # typed LLM calls (primary); OpenAI SDK is the fallbac
 
 # --- Orchestration ---
 burr[start]               # Apache Burr state machine + tracking UI
+
+# --- Export (v2 §9) ---
+python-docx                # DOCX export with citation endnotes

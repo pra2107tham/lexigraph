@@ -1,0 +1,3 @@
+# Test-only dependencies (no API keys needed to run the suite).
+pytest
+httpx        # fastapi.testclient transport

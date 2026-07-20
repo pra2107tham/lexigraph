@@ -5,8 +5,8 @@ one-line .env change. Mirascope ships a native `openrouter` provider, so no cust
 OpenAI-client wiring is needed — we register the key once and address models as
 `openrouter/<MODEL_ID>`. Two typed calls:
 
-  draft_section   -> DraftedSection (text + citations)
-  check_grounded  -> Grounded (yes/no + reason) for the evaluator (D4)
+  draft_section   -> DraftedSection (text + numbered citations)
+  check_claims    -> list[bool], one batched entailment call per section (§4 Tier 2)
 
 Prompt-caching note: native Anthropic cache_control is not guaranteed through
 OpenRouter, so v1 does not depend on it. System context is kept as a stable prefix
@@ -22,6 +22,7 @@ from mirascope import llm
 from pydantic import BaseModel
 
 from app.config import get_settings
+from app.drafting.postprocess import clean_section
 from app.models import DraftedSection, ParentChunk
 
 
@@ -54,18 +55,22 @@ def _format_sources(sources: list[ParentChunk]) -> str:
     )
 
 
-class Grounded(BaseModel):
-    grounded: bool
-    reason: str
+class _ClaimVerdicts(BaseModel):
+    supported: list[bool]
 
 
 _DRAFT_SYSTEM = (
     "You are a legal drafting co-counsel. Draft the requested section using ONLY "
-    "the SOURCES provided. Every substantive claim or clause must be backed by a "
-    "citation whose parent_id EXACTLY matches one of the provided sources. Do not "
-    "invent parent_ids. If sources conflict on a term (e.g. Net 30 vs Net 60), "
-    "present BOTH positions and their sources explicitly — never average or "
-    "silently choose one. Set section_id to the id given in the instructions."
+    "the SOURCES provided. Write GitHub-flavored markdown (paragraphs, ### "
+    "sub-headings, lists, bold). Do NOT repeat the section title; start directly "
+    "with the content. Mark every substantive claim with a bracketed number [1], "
+    "[2]… and list each citation exactly once in `citations` in that order: the "
+    "citation's parent_id must EXACTLY match a provided source and its quote must "
+    "be a VERBATIM excerpt from that source supporting the claim. NEVER write "
+    "parent_ids in the text — only numbered markers. If sources conflict on a "
+    "term (e.g. Net 30 vs Net 60), present BOTH positions and their sources "
+    "explicitly — never average or silently choose one. Set section_id to the id "
+    "given in the instructions."
 )
 
 
@@ -75,8 +80,13 @@ def draft_section(
     instructions: str,
     sources: list[ParentChunk],
     running_summary: str,
+    feedback: str = "",
 ) -> DraftedSection:
-    """Draft one section grounded strictly in the retrieved sources."""
+    """Draft one section grounded strictly in the retrieved sources.
+
+    `feedback` names the previous attempt's failed citations so redrafts are
+    targeted instead of blind (§4).
+    """
     user = (
         f"SOURCES:\n{_format_sources(sources)}\n\n"
         f"CONTEXT SO FAR (previously drafted, for consistency):\n"
@@ -84,29 +94,75 @@ def draft_section(
         f"Section id: {section_id}\n"
         f"Section title: {title}\n"
         f"Instructions: {instructions}"
+        + (f"\n\nPREVIOUS ATTEMPT FAILED:\n{feedback}" if feedback else "")
     )
     response = _model().call(
         [_system(_DRAFT_SYSTEM), _user(user)],
         format=DraftedSection,
     )
-    return response.parse()
+    drafted = response.parse()
+    files = {s.parent_id: s.source_file for s in sources}
+    for c in drafted.citations:
+        c.source_file = files.get(c.parent_id, "")
+    drafted.text, drafted.citations = clean_section(drafted.text, title, drafted.citations)
+    return drafted
 
 
-_GROUND_SYSTEM = (
-    "You verify citations. Decide whether the DRAFT TEXT can be reasonably "
-    "supported by the CITED SOURCE alone. Set grounded=true only if the source "
-    "substantiates the draft's claims; otherwise grounded=false with a short reason."
+class _Title(BaseModel):
+    title: str
+
+
+class _Abstract(BaseModel):
+    abstract: str
+
+
+def summarize_doc(parents: list[ParentChunk]) -> str:
+    """2-3 sentence abstract from a doc's leading parents (B1). Never fails
+    ingestion: any LLM error degrades to an empty abstract."""
+    if not parents:
+        return ""
+    try:
+        text = "\n\n".join(p.text for p in parents[:6])[:6000]
+        response = _model().call(
+            [_system("Summarize this legal document in 2-3 sentences: what it is, "
+                     "the parties/subject, and its key terms."),
+             _user(text)],
+            format=_Abstract,
+        )
+        return response.parse().abstract.strip()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def make_title(prompt: str) -> str:
+    """3-6 word session title from the first prompt; falls back to a truncation
+    so sessions still get named when no LLM is reachable."""
+    try:
+        response = _model().call(
+            [_system("Write a 3-6 word title for this legal drafting request. No quotes."),
+             _user(prompt)],
+            format=_Title,
+        )
+        return response.parse().title.strip() or prompt[:60]
+    except Exception:  # noqa: BLE001
+        return prompt[:60]
+
+
+_CLAIMS_SYSTEM = (
+    "You verify citations. For EACH numbered claim/quote pair, decide whether "
+    "the quoted source text reasonably supports the claim. Return `supported` "
+    "as a list of booleans, one per pair, in the same order."
 )
 
 
-def check_grounded(section_text: str, source: ParentChunk) -> Grounded:
-    """Ask the model whether section_text is supported by this cited source (D4)."""
-    user = (
-        f"CITED SOURCE (parent_id {source.parent_id}):\n{source.text}\n\n"
-        f"DRAFT TEXT:\n{section_text}"
+def check_claims(pairs: list[tuple[str, str]]) -> list[bool]:
+    """One batched entailment call for a whole section (§4 Tier 2)."""
+    if not pairs:
+        return []
+    user = "\n\n".join(
+        f"{i}. CLAIM: {claim}\n   QUOTE: {quote}" for i, (claim, quote) in enumerate(pairs, 1)
     )
-    response = _model().call(
-        [_system(_GROUND_SYSTEM), _user(user)],
-        format=Grounded,
-    )
-    return response.parse()
+    response = _model().call([_system(_CLAIMS_SYSTEM), _user(user)], format=_ClaimVerdicts)
+    verdicts = response.parse().supported
+    # models drift on list lengths; missing verdicts count as unsupported
+    return (verdicts + [False] * len(pairs))[: len(pairs)]

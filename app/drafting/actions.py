@@ -15,29 +15,57 @@ Each action reads/writes only the fields it needs, so the flow is inspectable.
 
 from __future__ import annotations
 
+from dataclasses import asdict
+from functools import partial
+
 from burr.core import State, action
 
-from app.drafting.llm import check_grounded, draft_section
+from app.config import get_settings
+from app.drafting import events
+from app.drafting.evaluator import evaluate_draft
+from app.drafting.llm import check_claims, draft_section
 from app.models import DraftedSection, ParentChunk
 from app.retrieval.retriever import retrieve
 from app.stores import mongo
 
 
-@action(reads=["sections", "cursor"], writes=["candidates", "retries"])
+def _emitter(state: State):
+    """emit(type, **data) scoped to the current job + section (§7)."""
+    section = state["sections"][state["cursor"]]
+    return partial(events.emit, state["job_id"],
+                   section_id=section["section_id"], section_index=state["cursor"])
+
+
+def _feedback(report: dict) -> str:
+    """Render an eval report as targeted redraft feedback (§4)."""
+    lines = [
+        f"citation [{f['index']}]: {f['reason']} (parent_id {f['parent_id']})"
+        for f in report.get("tier1_failed", [])
+    ] + [f"citation [{i}]: claim not supported by its quote" for i in report.get("unverified", [])]
+    return "\n".join(lines)
+
+
+@action(reads=["sections", "cursor", "session_id", "job_id"], writes=["candidates", "retries"])
 def retrieve_sources(state: State) -> State:
     section = state["sections"][state["cursor"]]
+    emit = _emitter(state)
+    emit("section_start", title=section["title"], index=state["cursor"])
     query = f"{section['title']} — {section['instructions']}"
-    parents = retrieve(query, top_n=5)
+    emit("retrieve_query", query=query)
+    parents = retrieve(query, top_n=5, session_id=state["session_id"], emit=emit)
     # A1: fresh section -> reset the redraft counter.
     return state.update(candidates=[p.model_dump() for p in parents], retries=0)
 
 
 @action(
-    reads=["sections", "cursor", "candidates", "running_summary", "retries"],
+    reads=["sections", "cursor", "candidates", "running_summary", "retries",
+           "eval_report", "job_id"],
     writes=["draft", "retries"],
 )
 def draft(state: State) -> State:
     section = state["sections"][state["cursor"]]
+    emit = _emitter(state)
+    emit("draft_start", attempt=state["retries"] + 1)
     sources = [ParentChunk(**c) for c in state["candidates"]]
     drafted = draft_section(
         section_id=section["section_id"],
@@ -45,37 +73,49 @@ def draft(state: State) -> State:
         instructions=section["instructions"],
         sources=sources,
         running_summary=state["running_summary"],
+        # §4: redrafts name WHICH citations failed instead of redrafting blind.
+        feedback=_feedback(state["eval_report"]) if state["retries"] > 0 else "",
     )
+    emit("draft_done", text_preview=drafted.text[:220],
+         citations=[c.model_dump() for c in drafted.citations])
     # A1: count this draft attempt; the evaluate->commit edge fires at the cap.
     return state.update(draft=drafted.model_dump(), retries=state["retries"] + 1)
 
 
-@action(reads=["draft", "candidates"], writes=["eval_ok"])
+@action(
+    reads=["draft", "candidates", "sections", "cursor", "job_id", "retries", "max_retries"],
+    writes=["eval_ok", "eval_report", "draft"],
+)
 def evaluate(state: State) -> State:
-    """D4: every citation must resolve to a candidate parent_id, and the cited
-    source must actually ground the text. Any failure -> rewrite.
+    """§4: Tier-1 deterministic quote verification, then one batched Tier-2
+    entailment call. Failing citations are named in the report so the redraft
+    is targeted; passing sections carry per-citation `verified` flags.
     """
+    settings = get_settings()
     drafted = DraftedSection(**state["draft"])
     by_id = {c["parent_id"]: ParentChunk(**c) for c in state["candidates"]}
+    report = evaluate_draft(
+        drafted,
+        by_id,
+        check=check_claims,
+        pass_ratio=settings.entailment_pass_ratio,
+        quote_threshold=settings.quote_match_threshold,
+    )
+    draft_out = state["draft"]
+    if report.citations:  # tier 1 passed: persist the per-citation verdicts
+        draft_out = {**draft_out, "citations": report.citations}
 
-    if not drafted.citations:
-        return state.update(eval_ok=False)
-
-    ok = True
-    for cite in drafted.citations:
-        source = by_id.get(cite.parent_id)
-        if source is None:  # fabricated / non-candidate parent_id
-            ok = False
-            break
-        if not check_grounded(drafted.text, source).grounded:
-            ok = False
-            break
-    return state.update(eval_ok=ok)
+    emit = _emitter(state)
+    emit("evaluate", eval_ok=report.eval_ok, attempt=state["retries"],
+         tier1_failed=report.tier1_failed, unverified=report.unverified)
+    if not report.eval_ok and state["retries"] < state["max_retries"]:
+        emit("redraft", attempt=state["retries"] + 1, max=state["max_retries"])
+    return state.update(eval_ok=report.eval_ok, eval_report=asdict(report), draft=draft_out)
 
 
 @action(
     reads=["job_id", "draft", "cursor", "sections", "drafted_sections",
-           "running_summary", "eval_ok", "needs_review"],
+           "running_summary", "eval_ok", "needs_review", "retries", "eval_report"],
     writes=["drafted_sections", "cursor", "running_summary", "needs_review"],
 )
 def commit(state: State) -> State:
@@ -87,13 +127,32 @@ def commit(state: State) -> State:
     flagged = not state["eval_ok"]
     needs_review = state["needs_review"] + ([section["section_id"]] if flagged else [])
 
-    mongo.drafted_sections().insert_one(
+    # §8: replace-not-insert so a resumed run re-committing a section dedupes;
+    # Mongo is the source of truth for committed sections.
+    mongo.drafted_sections().replace_one(
+        {"job_id": state["job_id"], "section_id": drafted.section_id},
         {
             **drafted.model_dump(),
             "job_id": state["job_id"],
             "title": section["title"],
             "needs_review": flagged,
-        }
+        },
+        upsert=True,
+    )
+    mongo.jobs().update_one(
+        {"_id": state["job_id"]},
+        {"$set": {f"audit.per_section.{drafted.section_id}": {
+            "attempts": state["retries"], "eval": state["eval_report"]}}},
+    )
+    # §7: carry the rendered /sections row (minus section_id, which rides on the
+    # event envelope) so the document panel appends the section live.
+    _emitter(state)(
+        "section_committed",
+        title=section["title"],
+        instructions=section.get("instructions", ""),
+        text=drafted.text,
+        citations=[c.model_dump() for c in drafted.citations],
+        needs_review=flagged,
     )
 
     summary = state["running_summary"]
@@ -111,6 +170,9 @@ def commit(state: State) -> State:
 def assemble(state: State) -> State:
     parts = []
     for sec, drafted in zip(state["sections"], state["drafted_sections"]):
-        cites = "; ".join(c["parent_id"] for c in drafted["citations"])
-        parts.append(f"## {sec['title']}\n\n{drafted['text']}\n\n_Citations: {cites}_")
+        sources = "\n".join(
+            f"{i}. _{c.get('source_file') or 'unknown source'}_ — \"{c['quote']}\""
+            for i, c in enumerate(drafted["citations"], start=1)
+        )
+        parts.append(f"## {sec['title']}\n\n{drafted['text']}" + (f"\n\n{sources}" if sources else ""))
     return state.update(document="\n\n".join(parts))
